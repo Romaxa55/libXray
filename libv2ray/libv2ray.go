@@ -162,3 +162,52 @@ func GetMemoryStats() string {
 	}
 	return `{"compat":"stub","running":false}`
 }
+
+// ConvertUrlToConfig — нативный xray-парсер URL → JSON xray-config.
+//
+// Зачем: убирает огромный куст Dart-парсера (V2RayUrlParser, ~600 строк +
+// V2RayOutboundGenerator, ~400 строк), который для каждого нового xray-фичи
+// надо вручную портировать. Здесь xray сам парсит свой URL и возвращает
+// готовый conf.Config со всеми streamSettings, tlsSettings, realitySettings,
+// sockopt, fingerprint, alpn, и т.д. — что бы там ни добавил xtls upstream.
+//
+// Input:  plain URL string ("vless://...?...", "vmess://...", "trojan://...",
+//         "ss://...", или v2rayN base64-bundle, или Clash YAML)
+// Output: plain JSON string с полной xray Config (с inbounds/outbounds/etc.)
+//         либо "FAILED: <reason>" при ошибке парсинга.
+//
+// На Dart-стороне разбирать вернувшийся JSON и брать только outbounds[0]
+// (proxy outbound). Inbounds/routing/dns мобила собирает сама.
+//
+// Под капотом дёргает libxray.ConvertShareLinksToXrayJson (base64-envelope),
+// здесь делаем удобную plain-string обёртку чтобы Dart-сторона не возилась
+// с base64.
+func ConvertUrlToConfig(url string) string {
+	reqB64 := base64.StdEncoding.EncodeToString([]byte(url))
+	respB64 := libxray.ConvertShareLinksToXrayJson(reqB64)
+
+	respBytes, err := base64.StdEncoding.DecodeString(respB64)
+	if err != nil {
+		return "FAILED: decode response: " + err.Error()
+	}
+
+	// nodep.CallResponse[*conf.Config] — но conf.Config мы здесь не
+	// импортируем (gomobile не любит сложные struct'ы из xray-core).
+	// Парсим как generic JSON и достаём Data поле напрямую.
+	var resp struct {
+		Success bool            `json:"success"`
+		Err     string          `json:"err,omitempty"`
+		Data    json.RawMessage `json:"data,omitempty"`
+	}
+	if err := json.Unmarshal(respBytes, &resp); err != nil {
+		return "FAILED: unmarshal response: " + err.Error()
+	}
+	if !resp.Success {
+		return "FAILED: " + resp.Err
+	}
+	if len(resp.Data) == 0 || string(resp.Data) == "null" {
+		return "FAILED: empty config returned for url"
+	}
+	// resp.Data это уже валидный JSON конфига xray.
+	return string(resp.Data)
+}

@@ -177,3 +177,33 @@ func ForceGC() *C.char {
 	runtime.GC()
 	return C.CString("SUCCESS")
 }
+
+// ConvertUrlToConfig — нативный xray-парсер URL → JSON xray-config.
+// См. libv2ray/libv2ray.go ConvertUrlToConfig для документации.
+//
+//export ConvertUrlToConfig
+func ConvertUrlToConfig(url *C.char) *C.char {
+	u := C.GoString(url)
+	reqB64 := base64.StdEncoding.EncodeToString([]byte(u))
+	respB64 := libxray.ConvertShareLinksToXrayJson(reqB64)
+
+	respBytes, err := base64.StdEncoding.DecodeString(respB64)
+	if err != nil {
+		return C.CString("FAILED: decode response: " + err.Error())
+	}
+	var resp struct {
+		Success bool            `json:"success"`
+		Err     string          `json:"err,omitempty"`
+		Data    json.RawMessage `json:"data,omitempty"`
+	}
+	if err := json.Unmarshal(respBytes, &resp); err != nil {
+		return C.CString("FAILED: unmarshal response: " + err.Error())
+	}
+	if !resp.Success {
+		return C.CString("FAILED: " + resp.Err)
+	}
+	if len(resp.Data) == 0 || string(resp.Data) == "null" {
+		return C.CString("FAILED: empty config returned for url")
+	}
+	return C.CString(string(resp.Data))
+}
