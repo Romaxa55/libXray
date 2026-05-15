@@ -63,10 +63,19 @@
 //   proxy/vmess/inbound ← same
 //   app/commander, app/log/command, app/proxyman/command, app/stats/command,
 //   app/observatory/command   ← gRPC runtime control API (no need in mobile)
-//   app/metrics, app/reverse, app/dns/fakedns ← not used
+//   app/metrics, app/reverse ← not used
 //   main/toml, main/yaml ← we only use JSON
 //   main/confloader/external ← we don't load config from URL
 //   main/commands/all ← CLI commands
+//
+// What was EXCLUDED but ADDED 2026-05-15:
+//   app/dns/fakedns ← REQUIRED for sniffer mapping table. Без него:
+//     macOS делает реальный UDP DNS → xray sniffer pытается переписать
+//     destination но без mapping table → routing loop / connection reset.
+//     Доказано экспериментально: routeOnly: true без FakeDNS дал
+//     "Recv failure: Connection reset by peer" даже на curl https://1.1.1.1.
+//     Расход памяти: ipPool 198.18.0.0/15 × poolSize 16384 = ~1.6 MB cap
+//     с LRU evict. Headroom 30+ MB до jetsam-limit → безопасно.
 //
 // IMPORTANT: If you add a new server protocol to backend/DB, add the matching
 // proxy/* import here AND rebuild xcframework:
@@ -83,6 +92,7 @@ import (
 
 	// App services.
 	_ "github.com/xtls/xray-core/app/dns"
+	_ "github.com/xtls/xray-core/app/dns/fakedns"
 	_ "github.com/xtls/xray-core/app/log"
 	_ "github.com/xtls/xray-core/app/observatory"
 	_ "github.com/xtls/xray-core/app/policy"
