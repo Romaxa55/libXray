@@ -30,3 +30,8 @@ test/
 config/
 .DS_Store
 bin/
+
+# Локальные build-каталоги (macOS) и бэкап-файлы
+build_macos/
+*.bak
+*.bak_*
