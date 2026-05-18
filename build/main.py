@@ -3,6 +3,7 @@ import os
 import sys
 
 from app.android import AndroidBuilder
+from app.android_libv2ray import AndroidLibV2RayBuilder
 from app.apple_go import AppleGoBuilder
 from app.apple_gomobile import AppleGoMobileBuilder
 from app.linux import LinuxBuilder
@@ -31,8 +32,22 @@ if __name__ == "__main__":
             raise Exception(f"platform {platform} tool {tool} not supported")
 
     elif platform == "android":
-        builder = AndroidBuilder(build_dir_path())
-        builder.build()
+        # python3 build/main.py android            → libXray.aar (legacy alias)
+        # python3 build/main.py android libxray    → libXray.aar (root package)
+        # python3 build/main.py android libv2ray   → libv2ray.aar (compat-shim)
+        # python3 build/main.py android all        → оба AAR последовательно
+        tool = sys.argv[2] if len(sys.argv) > 2 else "libxray"
+        if tool == "libxray":
+            builder = AndroidBuilder(build_dir_path())
+            builder.build()
+        elif tool == "libv2ray":
+            builder = AndroidLibV2RayBuilder(build_dir_path())
+            builder.build()
+        elif tool == "all":
+            AndroidBuilder(build_dir_path()).build()
+            AndroidLibV2RayBuilder(build_dir_path()).build()
+        else:
+            raise Exception(f"platform {platform} tool {tool} not supported")
 
     elif platform == "linux":
         builder = LinuxBuilder(build_dir_path())
