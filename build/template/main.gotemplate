@@ -94,3 +94,10 @@ func CGoBuildMphCache(base64Text *C.char) *C.char {
 	text := C.GoString(base64Text)
 	return C.CString(BuildMphCache(text))
 }
+
+//export CGoProbeOutbound
+func CGoProbeOutbound(outboundTag *C.char, targetURL *C.char, timeoutMs C.int) *C.char {
+	tag := C.GoString(outboundTag)
+	url := C.GoString(targetURL)
+	return C.CString(ProbeOutbound(tag, url, int(timeoutMs)))
+}

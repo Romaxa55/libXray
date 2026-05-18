@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -120,6 +121,24 @@ func ProbeOutbound(outboundTag, targetURL string, timeoutMs int) string {
 		timeout = 60 * time.Second
 	}
 
+	// 0. P1-5: URL scheme whitelist.
+	//    Защита от Firebase Remote Config / malformed remote URL подсунувших
+	//    file:///etc/passwd, javascript:alert(1), http://localhost:5555/admin
+	//    и подобных угроз. Принимаем ТОЛЬКО https/http.
+	parsedURL, urlErr := url.Parse(targetURL)
+	if urlErr != nil {
+		result.Error = fmt.Sprintf("invalid URL: %v", urlErr)
+		return marshalResult(result)
+	}
+	if parsedURL.Scheme != "https" && parsedURL.Scheme != "http" {
+		result.Error = fmt.Sprintf("URL scheme %q not allowed (only http/https)", parsedURL.Scheme)
+		return marshalResult(result)
+	}
+	if parsedURL.Host == "" {
+		result.Error = "URL host is empty"
+		return marshalResult(result)
+	}
+
 	// 1. Snapshot xray instance через atomic load.
 	//    Защита от concurrent Stop — даже если StopXray зануляет coreServer
 	//    после нашего load, мы продолжаем работать с локальным указателем
@@ -132,12 +151,16 @@ func ProbeOutbound(outboundTag, targetURL string, timeoutMs int) string {
 	}
 
 	// 2. Acquire semaphore (max 5 concurrent probes).
-	//    Если все слоты заняты — ждём до тех пор пока освободится либо
-	//    общий таймаут истечёт. Используем select с time.After как failsafe.
+	//    Используем context.WithTimeout вместо time.After — иначе
+	//    оставшиеся таймеры висят в куче до истечения, что на нагрузке
+	//    "20 probes × минута" даёт ~28800 dangling timers/день и копит
+	//    GC pressure (P1-1 в review).
+	acquireCtx, cancelAcquire := context.WithTimeout(context.Background(), timeout)
+	defer cancelAcquire()
 	select {
 	case probeSemaphore <- struct{}{}:
 		defer func() { <-probeSemaphore }()
-	case <-time.After(timeout):
+	case <-acquireCtx.Done():
 		result.RttMs = time.Since(time.UnixMilli(startMs)).Milliseconds()
 		result.Error = "semaphore timeout (5 concurrent probes max)"
 		return marshalResult(result)
@@ -152,6 +175,10 @@ func ProbeOutbound(outboundTag, targetURL string, timeoutMs int) string {
 	//      - session.SetForcedOutboundTagToContext помещает tag в ctx до Dial,
 	//        dispatcher видит этот forced tag первым делом и ВСЕГДА роутит туда,
 	//        игнорируя balancer/routing rules. См. xray-core/app/dispatcher/default.go:457.
+	//
+	//    P2-2: Content создаём один раз и явно (SkipDNSResolve+forced-tag вместе).
+	//    SetForcedOutboundTagToContext сам бы создал Content если его нет, но это
+	//    хрупкий ordering — здесь явно гарантируем что SkipDNSResolve не потеряется.
 	transport := &http.Transport{
 		DisableKeepAlives: true,
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -159,8 +186,7 @@ func ProbeOutbound(outboundTag, targetURL string, timeoutMs int) string {
 			if err != nil {
 				return nil, err
 			}
-			content := &session.Content{SkipDNSResolve: true}
-			ctx = session.ContextWithContent(ctx, content)
+			ctx = session.ContextWithContent(ctx, &session.Content{SkipDNSResolve: true})
 			ctx = session.SetForcedOutboundTagToContext(ctx, outboundTag)
 			// core.Dial сам сделает toContext(ctx, inst) внутри.
 			return core.Dial(ctx, inst, dest)

@@ -6,7 +6,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/vishvananda/netlink v1.3.1
 	github.com/xtls/xray-core v1.260327.0
-	golang.org/x/mobile v0.0.0-20260508232728-bebd421c7fa8
+	golang.org/x/mobile v0.0.0-20260514233045-7de0a8fa7f4d
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
 )
