@@ -1,5 +1,5 @@
 // libXray is an Xray wrapper focusing on improving the experience of Xray-core mobile development.
-package libXray
+package main
 
 import (
 	"encoding/base64"
@@ -191,6 +191,19 @@ func RunXrayFromJSON(base64Text string) string {
 // Get Xray State
 func GetXrayState() bool {
 	return xray.GetXrayState()
+}
+
+// ProbeOutbound — root wrapper для honest HTTP-probe конкретного outbound
+// в работающем xray-инстансе. Обёртка вокруг xray.ProbeOutbound — нужна
+// чтобы compat-shims (libv2ray/, libv2ray_cgo/) могли её вызвать через
+// alias `libxray "github.com/xtls/libxray"` (root package).
+//
+// Returns JSON-строку: см. xray/probe_outbound.go::ProbeOutboundResult.
+//
+// На скате compat-shim вызов идёт как libxray.ProbeOutbound(...), а отсюда
+// проксируется в xray.ProbeOutbound который и делает реальный probe.
+func ProbeOutbound(outboundTag, targetURL string, timeoutMs int) string {
+	return xray.ProbeOutbound(outboundTag, targetURL, timeoutMs)
 }
 
 // Stop Xray instance.

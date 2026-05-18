@@ -82,6 +82,7 @@ func RunXray(datDir string, mphCachePath string, configPath string) (err error) 
 		return
 	}
 
+	syncCoreServerPtr() // 2026-05-18: thread-safe snapshot для ProbeOutbound
 	debug.FreeOSMemory()
 	return nil
 }
@@ -98,6 +99,7 @@ func RunXrayFromJSON(datDir string, mphCachePath string, configJSON string) (err
 		return
 	}
 
+	syncCoreServerPtr() // 2026-05-18: thread-safe snapshot для ProbeOutbound
 	debug.FreeOSMemory()
 	return nil
 }
@@ -112,6 +114,7 @@ func StopXray() error {
 	if coreServer != nil {
 		err := coreServer.Close()
 		coreServer = nil
+		syncCoreServerPtr() // 2026-05-18: thread-safe snapshot для ProbeOutbound
 		if err != nil {
 			return err
 		}

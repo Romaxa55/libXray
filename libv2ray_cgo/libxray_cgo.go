@@ -150,6 +150,26 @@ func TestV2RayConnection(url *C.char) *C.char {
 	return C.CString("FAILED: xray not running")
 }
 
+// ProbeOutbound — honest HTTP-probe через указанный outbound в работающем
+// xray-инстансе. Принудительная маршрутизация через session.SetForcedOutboundTagToContext.
+//
+// Returns C-string JSON. Caller MUST free через Free(ptr).
+//
+// Использование из Swift/Obj-C на macOS:
+//   let raw = ProbeOutbound(strdup("server-15"), strdup("https://ip.megav.app/"), 5000)
+//   let json = String(cString: raw!)
+//   Free(raw)
+//
+// См. libv2ray/libv2ray.go::ProbeOutbound — документация полная.
+//
+//export ProbeOutbound
+func ProbeOutbound(outboundTag *C.char, targetURL *C.char, timeoutMs C.int) *C.char {
+	tag := C.GoString(outboundTag)
+	url := C.GoString(targetURL)
+	timeout := int(timeoutMs)
+	return C.CString(libxray.ProbeOutbound(tag, url, timeout))
+}
+
 //export GetV2RayStatus
 func GetV2RayStatus() *C.char {
 	if libxray.GetXrayState() {

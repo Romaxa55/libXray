@@ -47,6 +47,14 @@ class Builder(object):
 
     def download_geo(self):
         os.chdir(self.lib_dir)
+        # MegaV-patch 2026-05-18: пропускаем download если файлы есть.
+        # download_geo/main.go импортирует root libxray (package main), что
+        # ломается если в Go-кэше нет уже скомпилированных артефактов.
+        geoip = os.path.join(self.lib_dir, "dat", "geoip.dat")
+        geosite = os.path.join(self.lib_dir, "dat", "geosite.dat")
+        if os.path.exists(geoip) and os.path.exists(geosite):
+            print(f"[download_geo] skip — files already exist in {os.path.dirname(geoip)}")
+            return
         main_path = os.path.join("download_geo", "main.go")
         ret = subprocess.run(["go", "run", main_path])
         if ret.returncode != 0:

@@ -138,6 +138,30 @@ func TestV2RayConnection(url string) string {
 	return "FAILED: xray not running"
 }
 
+// ProbeOutbound — honest HTTP-probe через конкретный outbound в работающем
+// xray-инстансе. Использует session.SetForcedOutboundTagToContext для
+// принудительной маршрутизации (игнорируя balancer/routing).
+//
+// Returns JSON-строку с полями:
+//   outbound_tag, target_url, alive, http_code, rtt_ms, body_excerpt, error, timestamp_ms
+//
+// Использование Dart (через v2ray_flutter MethodChannel):
+//   final r = await V2Ray.probeOutbound(
+//     tag: 'server-15',
+//     url: 'https://ip.megav.app/',
+//     timeoutMs: 5000,
+//   );
+//   if (r['alive'] && r['http_code'] == 200) {
+//     // server-15 жив, exit_ip и asn в body_excerpt
+//   }
+//
+// Memory: ~1.5 MB на active probe — безопасно для iOS NE jetsam 50MB cap.
+//
+// Подробности реализации: см. xray/probe_outbound.go.
+func ProbeOutbound(outboundTag, targetURL string, timeoutMs int) string {
+	return libxray.ProbeOutbound(outboundTag, targetURL, timeoutMs)
+}
+
 // CheckVersionX — устаревший alias для XrayVersion.
 func CheckVersionX() string {
 	return GetV2RayVersion()
