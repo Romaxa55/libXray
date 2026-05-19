@@ -99,11 +99,10 @@ func TestHysteria2_WithEverything(t *testing.T) {
 	assert.Equal(t, conf.Bandwidth("50 mbps"), qp.BrutalUp)
 	assert.Equal(t, conf.Bandwidth("100 mbps"), qp.BrutalDown)
 
-	// UdpHop
-	var portList string
-	require.NoError(t, json.Unmarshal(qp.UdpHop.PortList, &portList))
-	assert.Equal(t, "20000-40000", portList)
-	require.NotNil(t, qp.UdpHop.Interval)
+	// UdpHop (v26.5.9 API: PortList — value-type с Range []PortRange)
+	require.Len(t, qp.UdpHop.PortList.Range, 1)
+	assert.Equal(t, uint32(20000), qp.UdpHop.PortList.Range[0].From)
+	assert.Equal(t, uint32(40000), qp.UdpHop.PortList.Range[0].To)
 	assert.Equal(t, int32(30), qp.UdpHop.Interval.From)
 	assert.Equal(t, int32(30), qp.UdpHop.Interval.To)
 
@@ -139,11 +138,10 @@ func TestHysteria2_PortsOnlyNoCongestion(t *testing.T) {
 	assert.Empty(t, string(qp.BrutalUp))
 	assert.Empty(t, string(qp.BrutalDown))
 
-	// UdpHop is set
-	var portList string
-	require.NoError(t, json.Unmarshal(qp.UdpHop.PortList, &portList))
-	assert.Equal(t, "20000-40000", portList)
-	require.NotNil(t, qp.UdpHop.Interval)
+	// UdpHop is set (v26.5.9 API)
+	require.Len(t, qp.UdpHop.PortList.Range, 1)
+	assert.Equal(t, uint32(20000), qp.UdpHop.PortList.Range[0].From)
+	assert.Equal(t, uint32(40000), qp.UdpHop.PortList.Range[0].To)
 	assert.Equal(t, int32(10), qp.UdpHop.Interval.From)
 	assert.Equal(t, int32(10), qp.UdpHop.Interval.To)
 }

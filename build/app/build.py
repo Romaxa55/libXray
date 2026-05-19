@@ -35,6 +35,19 @@ class Builder(object):
         if ret.returncode != 0:
             raise Exception("go mod init failed")
 
+        # MegaV-patch 2026-05-18: pin xray-core на v26.5.9 (с XHTTP leak fix).
+        # Без этого pin'а go mod tidy берёт @latest = v1.260327.0 без common/geodata,
+        # build падает с "module does not contain package geodata".
+        ret = subprocess.run(
+            [
+                "go",
+                "get",
+                "github.com/xtls/xray-core@1bdb488c9ec09ea51e6899697d5b7437f3cf6eb2",
+            ]
+        )
+        if ret.returncode != 0:
+            raise Exception("go get xray-core pinned commit failed")
+
         ret = subprocess.run(
             [
                 "go",
@@ -162,6 +175,17 @@ class Builder(object):
         ret = subprocess.run(["go", "mod", "init", LIBXRAY_MOD_NAME])
         if ret.returncode != 0:
             raise Exception("go mod init failed")
+
+        # MegaV-patch 2026-05-18: тот же pin что в init_go_env (см. выше).
+        ret = subprocess.run(
+            [
+                "go",
+                "get",
+                "github.com/xtls/xray-core@1bdb488c9ec09ea51e6899697d5b7437f3cf6eb2",
+            ]
+        )
+        if ret.returncode != 0:
+            raise Exception("go get xray-core pinned commit failed in revert")
 
         ret = subprocess.run(
             [

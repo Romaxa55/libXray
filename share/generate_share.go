@@ -245,13 +245,20 @@ func streamSettingsQuery(proxy conf.OutboundDetourConfig, link *url.URL) {
 			if len(qp.BrutalDown) > 0 {
 				query = addQuery(query, "down", string(qp.BrutalDown))
 			}
-			if qp.UdpHop.PortList != nil {
-				var portList string
-				if json.Unmarshal(qp.UdpHop.PortList, &portList) == nil && len(portList) > 0 {
-					query = addQuery(query, "ports", portList)
+			// v26.5.9 API: UdpHop.PortList и Interval теперь value-types (struct),
+			// не указатели. Проверяем через len(Range)/From.
+			if len(qp.UdpHop.PortList.Range) > 0 {
+				var parts []string
+				for _, r := range qp.UdpHop.PortList.Range {
+					if r.From == r.To {
+						parts = append(parts, strconv.Itoa(int(r.From)))
+					} else {
+						parts = append(parts, fmt.Sprintf("%d-%d", r.From, r.To))
+					}
 				}
+				query = addQuery(query, "ports", strings.Join(parts, ","))
 			}
-			if qp.UdpHop.Interval != nil {
+			if qp.UdpHop.Interval.From > 0 {
 				query = addQuery(query, "hop-interval", strconv.FormatInt(int64(qp.UdpHop.Interval.From), 10))
 			}
 		}

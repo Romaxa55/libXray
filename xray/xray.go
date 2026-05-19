@@ -61,9 +61,10 @@ func InitEnv(datDir string, mphCachePath string) {
 	os.Setenv(platform.AssetLocation, datDir)
 	os.Setenv(platform.CertLocation, datDir)
 
-	if mphCachePath != "" {
-		os.Setenv(platform.MphCachePath, mphCachePath)
-	}
+	// v26.5.9 убрал MPH-cache из xray-core (см. release notes 2026-05).
+	// mphCachePath аргумент оставлен для backward compat caller-API (мобила/backend),
+	// но больше не используется.
+	_ = mphCachePath
 }
 
 // Run Xray instance.
@@ -127,23 +128,22 @@ func XrayVersion() string {
 	return core.Version()
 }
 
-// https://github.com/XTLS/Xray-core/blob/main/main/commands/all/buildmphcache.go
+// BuildMphCache — deprecated в xray-core v26.5.9 (MPH-cache убран как
+// механизм оптимизации). Функция оставлена для backward compat caller-API,
+// но больше не делает ничего полезного: парсит config чтобы не сломать
+// existing scripts которые проверяют валидность конфига до RunXray.
 func BuildMphCache(datDir string, mphCachePath string, configPath string) error {
+	_ = mphCachePath // unused after v26.5.9
 	InitEnv(datDir, "")
 	cf, err := os.Open(configPath)
 	if err != nil {
 		base.Fatalf("failed to open config file: %v", err)
+		return err
 	}
 	defer cf.Close()
 
-	config, err := serial.DecodeJSONConfig(cf)
-	if err != nil {
+	if _, err := serial.DecodeJSONConfig(cf); err != nil {
 		base.Fatalf("failed to decode config file: %v", err)
-		return err
-	}
-
-	if err := config.BuildMPHCache(&mphCachePath); err != nil {
-		base.Fatalf("failed to build MPH cache: %v", err)
 		return err
 	}
 	return nil

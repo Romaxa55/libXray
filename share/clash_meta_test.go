@@ -67,11 +67,10 @@ func TestClashHysteria2_WithBandwidthPortHoppingSalamander(t *testing.T) {
 	assert.Equal(t, conf.Bandwidth("100 mbps"), qp.BrutalUp)
 	assert.Equal(t, conf.Bandwidth("200 mbps"), qp.BrutalDown)
 
-	// UdpHop
-	var portList string
-	require.NoError(t, json.Unmarshal(qp.UdpHop.PortList, &portList))
-	assert.Equal(t, "20000-40000", portList)
-	require.NotNil(t, qp.UdpHop.Interval)
+	// UdpHop (v26.5.9 API)
+	require.Len(t, qp.UdpHop.PortList.Range, 1)
+	assert.Equal(t, uint32(20000), qp.UdpHop.PortList.Range[0].From)
+	assert.Equal(t, uint32(40000), qp.UdpHop.PortList.Range[0].To)
 	assert.Equal(t, int32(30), qp.UdpHop.Interval.From)
 	assert.Equal(t, int32(30), qp.UdpHop.Interval.To)
 
@@ -112,8 +111,8 @@ func TestClashHysteria2_BandwidthOnly(t *testing.T) {
 	// No Salamander
 	assert.Empty(t, ss.FinalMask.Udp)
 
-	// No UdpHop
-	assert.Nil(t, qp.UdpHop.PortList)
+	// No UdpHop (v26.5.9 API: PortList — value-type, проверяем len Range)
+	assert.Empty(t, qp.UdpHop.PortList.Range)
 }
 
 func TestClashHysteria2_SalamanderOnly(t *testing.T) {

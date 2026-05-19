@@ -21,15 +21,20 @@ func buildHy2FinalMask(up, down, ports string, hopInterval *int32, obfsType, obf
 			quicParams.BrutalDown = conf.Bandwidth(down)
 		}
 		if ports != "" {
+			// v26.5.9 API: UdpHop.PortList — value-type conf.PortList с полем
+			// Range []PortRange. Парсим через стандартный UnmarshalJSON: он
+			// принимает строку "443,1024-2048" и заполняет Range.
 			udpHop := conf.UdpHop{}
-			portListJSON, err := json.Marshal(ports)
+			portsJSON, err := json.Marshal(ports)
 			if err != nil {
 				return nil, err
 			}
-			udpHop.PortList = portListJSON
+			if err := udpHop.PortList.UnmarshalJSON(portsJSON); err != nil {
+				return nil, err
+			}
 			if hopInterval != nil {
 				i := *hopInterval
-				udpHop.Interval = &conf.Int32Range{Left: i, Right: i, From: i, To: i}
+				udpHop.Interval = conf.Int32Range{Left: i, Right: i, From: i, To: i}
 			}
 			quicParams.UdpHop = udpHop
 		}
