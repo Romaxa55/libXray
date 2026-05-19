@@ -35,3 +35,4 @@ bin/
 build_macos/
 *.bak
 *.bak_*
+vendor/

@@ -67,9 +67,55 @@ if [ -n "$NEW_PIN" ]; then
 fi
 
 # =====================================================================
+# Apply local patches over xray-core
+# =====================================================================
+# Что патчим:
+#   common/errors/feature_errors.go — превращает PrintNonRemovalDeprecated*
+#   и PrintDeprecated* в no-op. Иначе xray валит десятки строк
+#   `WebSocket transport is deprecated` в stdout на каждый connect (на
+#   каждый ws/grpc outbound), что мы не можем глушить через log.Handler
+#   потому что app/log при старте xray затирает наш handler своим.
+#
+# Vendor создаётся перед `go build`, патч копируется поверх. После
+# сборки vendor удаляется (40 МБ, не нужен в git). Это сохраняет patches/
+# в репо чистыми и не пихает 40 МБ копии xray-core.
+apply_xray_patches() {
+  if [ ! -d patches/xray-core-overlay ]; then
+    return 0  # нет патчей — пропустить
+  fi
+  log_step "Применяю патчи xray-core (patches/xray-core-overlay/)"
+  # Если vendor уже есть (после ошибки прошлого билда) — обновим, не пересоздаём
+  if [ ! -d vendor ]; then
+    log_substep "go mod vendor..."
+    go mod vendor >/dev/null 2>&1
+  fi
+  # Копируем каждый файл patches/xray-core-overlay/* → vendor/github.com/xtls/xray-core/*
+  find patches/xray-core-overlay -type f | while read -r src; do
+    rel="${src#patches/xray-core-overlay/}"
+    dst="vendor/github.com/xtls/xray-core/$rel"
+    if [ -f "$dst" ]; then
+      cp "$src" "$dst"
+      log_substep "patched: $rel"
+    else
+      log_warn "skip patch (target not found): $rel"
+    fi
+  done
+}
+
+cleanup_vendor() {
+  if [ -d vendor ]; then
+    rm -rf vendor
+  fi
+}
+
+# Применяем патчи в начале каждой сборки (для Apple/Android/Linux/Windows)
+trap cleanup_vendor EXIT
+
+# =====================================================================
 # Apple
 # =====================================================================
 build_apple() {
+  apply_xray_patches
   log_step "Apple: Libv2ray.xcframework + LibXray.xcframework + libv2ray.a"
   PATH="$HOME/go/bin:$PATH" python3 build/main.py apple all
 
@@ -107,6 +153,7 @@ build_apple() {
 # Android
 # =====================================================================
 build_android() {
+  apply_xray_patches
   log_step "Android: libXray.aar + libv2ray.aar (compat shim)"
   if [ -z "${ANDROID_NDK_HOME:-}" ] && [ ! -d "$HOME/Library/Android/sdk/ndk" ]; then
     log_warn "ANDROID_NDK_HOME не задан и NDK не найден — gomobile может упасть"
@@ -133,6 +180,7 @@ build_android() {
 # Linux
 # =====================================================================
 build_linux() {
+  apply_xray_patches
   log_step "Linux: libXray.so (x86_64 + arm64)"
   if [ "$(uname)" != "Linux" ]; then
     log_warn "Текущая ОС — $(uname). libXray Linux-сборка ХОЧЕТ нативный gcc."
@@ -159,6 +207,7 @@ build_linux() {
 # Windows
 # =====================================================================
 build_windows() {
+  apply_xray_patches
   log_step "Windows: libXray.dll"
   if [ "$(uname)" != "Windows_NT" ] && ! command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
     log_warn "Не Windows и нет MinGW-w64 (x86_64-w64-mingw32-gcc)."
