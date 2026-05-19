@@ -4,6 +4,7 @@ import sys
 
 from app.android import AndroidBuilder
 from app.android_libv2ray import AndroidLibV2RayBuilder
+from app.apple_deploy import deploy_apple_xcframeworks
 from app.apple_go import AppleGoBuilder
 from app.apple_gomobile import AppleGoMobileBuilder
 from app.linux import LinuxBuilder
@@ -21,6 +22,9 @@ if __name__ == "__main__":
     platform = sys.argv[1]
 
     if platform == "apple":
+        # python3 build/main.py apple go         → LibXray.xcframework (cgo)
+        # python3 build/main.py apple gomobile   → Libv2ray.xcframework (gomobile)
+        # python3 build/main.py apple all        → оба + deploy в проект
         tool = sys.argv[2]
         if tool == "go":
             builder = AppleGoBuilder(build_dir_path())
@@ -28,6 +32,17 @@ if __name__ == "__main__":
         elif tool == "gomobile":
             builder = AppleGoMobileBuilder(build_dir_path())
             builder.build()
+        elif tool == "all":
+            # Сначала gomobile (он быстрее и реже падает), потом cgo.
+            AppleGoMobileBuilder(build_dir_path()).build()
+            AppleGoBuilder(build_dir_path()).build()
+            # Подкладываем свежие xcframework'и в vpn_native_client +
+            # v2ray_flutter. После этого `flutter run -d macos` без
+            # ручного cp -R увидит новый xray (с log_filter etc.).
+            libxray_dir = os.path.abspath(
+                os.path.join(build_dir_path(), "..")
+            )
+            deploy_apple_xcframeworks(libxray_dir)
         else:
             raise Exception(f"platform {platform} tool {tool} not supported")
 

@@ -72,6 +72,7 @@ func InitEnv(datDir string, mphCachePath string) {
 // mphCachePath means the path of mph cache file. leave it empty if you don't use mph cache.
 // configPath means the config.json file path.
 func RunXray(datDir string, mphCachePath string, configPath string) (err error) {
+	installSilentDeprecationFilter() // глушит ws/grpc deprecated-spam
 	InitEnv(datDir, mphCachePath)
 	memory.InitForceFree()
 	coreServer, err = StartXray(configPath)
@@ -93,6 +94,7 @@ func RunXray(datDir string, mphCachePath string, configPath string) (err error) 
 // mphCachePath means the path of mph cache file. leave it empty if you don't use mph cache.
 // configJSON means the JSON configuration string.
 func RunXrayFromJSON(datDir string, mphCachePath string, configJSON string) (err error) {
+	installSilentDeprecationFilter() // глушит ws/grpc deprecated-spam
 	InitEnv(datDir, mphCachePath)
 	memory.InitForceFree()
 	coreServer, err = StartXrayFromJSON(configJSON)

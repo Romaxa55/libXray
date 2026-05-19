@@ -268,7 +268,38 @@ class AppleGoBuilder(Builder):
         )
         shutil.copy(header_file, include_dir)
 
+    def _wrap_single_arch_to_fat(self, sdk: str, arch: str):
+        """Single-arch таргеты (iphoneos-arm64, appletvos-arm64) Go собирает
+        как thin-archive (magic 0x41000000 = `!<thin>`). Современный xcodebuild
+        падает с `unable to find any architecture information`. Wrap'аем
+        single thin → fat (с 1 архитектурой) через lipo, тогда xcodebuild
+        видит универсальный заголовок и парсит его нормально.
+
+        Multi-arch таргеты этим не страдают: merge_static_lib() уже
+        конвертит их в fat через `lipo -create -arch X file.a -arch Y file.a`.
+        """
+        lib_dir = os.path.join(self.framework_dir, f"{sdk}-{arch}")
+        lib_file = os.path.join(lib_dir, self.lib_file)
+        if not os.path.exists(lib_file):
+            return
+        # lipo сам определит arch по содержимому при `-create thin.a`.
+        cmd = ["lipo", "-create", lib_file, "-output", lib_file + ".fat"]
+        print(cmd)
+        ret = subprocess.run(cmd)
+        if ret.returncode != 0:
+            raise Exception(f"wrap_single_arch_to_fat for {sdk}-{arch} failed")
+        os.replace(lib_file + ".fat", lib_file)
+
     def create_framework(self):
+        # 2026-05-19: thin-archive из Go 1.25+ ломает xcodebuild — оборачиваем
+        # single-arch таргеты (iOS device + tvOS device) в fat-формат через lipo.
+        self._wrap_single_arch_to_fat(
+            self.ios_targets[0].sdk, self.ios_targets[0].apple_arch
+        )
+        self._wrap_single_arch_to_fat(
+            self.tvos_targets[0].sdk, self.tvos_targets[0].apple_arch
+        )
+
         libs = [
             f"{self.ios_targets[0].sdk}-{self.ios_targets[0].apple_arch}",
             f"{self.ios_targets[1].sdk}-{self.ios_targets[1].apple_arch}-{self.ios_targets[2].apple_arch}",
