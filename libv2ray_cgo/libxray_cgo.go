@@ -170,6 +170,25 @@ func ProbeOutbound(outboundTag *C.char, targetURL *C.char, timeoutMs C.int) *C.c
 	return C.CString(libxray.ProbeOutbound(tag, url, timeout))
 }
 
+// GetObservatoryState — snapshot текущего состояния burstObservatory.
+// Internal-only вызов (без сети) — observatory сама пингует в фоне.
+//
+// Returns C-string JSON. Caller MUST free через Free(ptr).
+//
+// Использование из Swift/Obj-C на macOS:
+//   let raw = GetObservatoryState(strdup(""))  // requestJSON пока не используется
+//   let json = String(cString: raw!)
+//   Free(raw)
+//   // parse JSON: {"nodes":[{"tag":"bs-0","alive":true,"delay_ms":818,...}], ...}
+//
+// См. libv2ray/libv2ray.go::GetObservatoryState — полная документация.
+//
+//export GetObservatoryState
+func GetObservatoryState(requestJSON *C.char) *C.char {
+	req := C.GoString(requestJSON)
+	return C.CString(libxray.GetObservatoryState(req))
+}
+
 //export GetV2RayStatus
 func GetV2RayStatus() *C.char {
 	if libxray.GetXrayState() {

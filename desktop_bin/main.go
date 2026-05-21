@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/xtls/libxray/share"
 	"github.com/xtls/libxray/xray"
 )
 
@@ -27,7 +28,32 @@ func main() {
 	probeTimeout := flag.Int("probeTimeoutMs", 5000, "Probe timeout per outbound, ms")
 	probeConcurrency := flag.Int("probeConcurrency", 5, "Сколько параллельных probe запускать (5 норм для iOS 50MB cap)")
 	keepRunning := flag.Bool("keepRunning", false, "После probe не выходить (для curl-тестов вручную)")
+	convertUrl := flag.String("convertUrl", "", "Конвертирует share-URL (vless://, vmess://, trojan://, ss://) в xray-config JSON через нативный парсер libxray. Печатает в stdout и выходит.")
+	// Observatory state режим: ждёт N сек после старта (чтобы observatory сделал
+	// несколько раундов probe), потом вызывает GetObservatoryState и печатает JSON.
+	// Используется для lab-проверки нового API до сборки libXray для мобилок.
+	observatoryState := flag.Bool("observatoryState", false, "После старта подождать --observatoryWait сек и напечатать ObservatoryState JSON")
+	observatoryWait := flag.Int("observatoryWait", 35, "Сколько секунд ждать observatory'у на раунды probe перед snapshot'ом (default 35 = чуть больше observatoryInterval=30s)")
+	observatoryPoll := flag.Int("observatoryPoll", 0, "Если >0 — печатать ObservatoryState каждые N сек (стрим, для отладки live-обновления). 0 = single shot.")
 	flag.Parse()
+
+	// 0. --convertUrl: одноразовая конвертация URL → JSON через native parser.
+	// Полезно для дебага: проверить что Go-парсер реально кладёт в
+	// streamSettings.tlsSettings.allowInsecure / serverName / etc.
+	if *convertUrl != "" {
+		cfg, err := share.ConvertShareLinksToXrayJson(*convertUrl)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "FAILED: %v\n", err)
+			os.Exit(1)
+		}
+		out, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "FAILED to marshal: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(string(out))
+		return
+	}
 
 	// 1. Старт xray по одному из двух путей
 	var startErr error
@@ -36,7 +62,7 @@ func main() {
 	} else if *configPath != "" {
 		startErr = runXray(*configPath)
 	} else {
-		fmt.Fprintln(os.Stderr, "ERROR: укажи либо --configPath, либо --xrayConfig")
+		fmt.Fprintln(os.Stderr, "ERROR: укажи либо --configPath, либо --xrayConfig, либо --convertUrl")
 		flag.Usage()
 		os.Exit(2)
 	}
@@ -68,10 +94,67 @@ func main() {
 		}
 	}
 
+	// 2.5 Observatory-state режим. Ждём N сек чтобы burstObservatory успел
+	// сделать хотя бы пару раундов (observatoryInterval=30s, sampling=3 →
+	// ~90s для полной картины). На 35s обычно уже видны первые delay'и.
+	//
+	// Полезно для lab-теста: реальный xray-config, observatory работает,
+	// смотрим что отдаёт GetObservatoryState — JSON со всеми узлами и их
+	// alive/RTT. Прежде чем собирать libXray для мобилок.
+	if *observatoryState {
+		fmt.Fprintf(os.Stderr, "[obs-state] waiting %d sec for observatory rounds...\n", *observatoryWait)
+		time.Sleep(time.Duration(*observatoryWait) * time.Second)
+
+		if *observatoryPoll > 0 {
+			// Live-стрим: печатаем snapshot каждые N сек. Удобно смотреть как
+			// узлы переходят alive/dead, как delay колеблется во времени.
+			fmt.Fprintf(os.Stderr, "[obs-state] streaming every %ds, press Ctrl-C to stop\n", *observatoryPoll)
+			osSignals := make(chan os.Signal, 1)
+			signal.Notify(osSignals, os.Interrupt, syscall.SIGTERM)
+			ticker := time.NewTicker(time.Duration(*observatoryPoll) * time.Second)
+			defer ticker.Stop()
+			// Первый snapshot — сразу
+			printObservatorySnapshot()
+			for {
+				select {
+				case <-ticker.C:
+					printObservatorySnapshot()
+				case <-osSignals:
+					return
+				}
+			}
+		}
+
+		// Single-shot
+		printObservatorySnapshot()
+		if !*keepRunning {
+			return
+		}
+	}
+
 	// 3. Иначе ждём SIGINT/SIGTERM (стандартный режим)
 	osSignals := make(chan os.Signal, 1)
 	signal.Notify(osSignals, os.Interrupt, syscall.SIGTERM)
 	<-osSignals
+}
+
+// printObservatorySnapshot вызывает xray.GetObservatoryState и красиво
+// печатает JSON-результат. Для отдельной строки времени префиксуем
+// нашим timestamp'ом — чтоб в стриме различать снимки.
+func printObservatorySnapshot() {
+	raw := xray.GetObservatoryState("")
+	// Pretty-print: парсим обратно и MarshalIndent — JSON станет читаемым,
+	// удобно глазом проверять.
+	var parsed interface{}
+	if err := json.Unmarshal([]byte(raw), &parsed); err == nil {
+		out, _ := json.MarshalIndent(parsed, "", "  ")
+		fmt.Printf("---- obs-state @ %s ----\n%s\n",
+			time.Now().Format("15:04:05"), string(out))
+	} else {
+		// raw был не-JSON по какой-то причине — печатаем как есть
+		fmt.Printf("---- obs-state @ %s (raw, parse failed: %v) ----\n%s\n",
+			time.Now().Format("15:04:05"), err, raw)
+	}
 }
 
 // runXrayDirect запускает xray с raw config-файлом, без wrapper-структуры.

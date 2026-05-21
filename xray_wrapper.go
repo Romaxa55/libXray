@@ -206,6 +206,25 @@ func ProbeOutbound(outboundTag, targetURL string, timeoutMs int) string {
 	return xray.ProbeOutbound(outboundTag, targetURL, timeoutMs)
 }
 
+// GetObservatoryState — root wrapper для snapshot'а текущего состояния
+// burstObservatory: alive/dead/RTT всех outbound'ов из subjectSelector.
+//
+// Returns JSON-строку: см. xray/observatory_state.go::ObservatoryStateResponse.
+//
+// Используется UI на Dart-стороне для визуализации chain-mode (бутстрапы +
+// exit'ы с цветом по alive, winner = min(delay_ms) среди alive). НЕ создаёт
+// сетевого трафика — observatory сама делает probe в фоне (каждые 30s),
+// мы только читаем уже собранную статистику.
+//
+// requestJSON — зарезервирован под будущие расширения (например фильтр
+// по тегам). Сейчас можно передавать "" — игнорируется.
+//
+// На скате compat-shim вызов идёт как libxray.GetObservatoryState(...),
+// проксируется в xray.GetObservatoryState.
+func GetObservatoryState(requestJSON string) string {
+	return xray.GetObservatoryState(requestJSON)
+}
+
 // Stop Xray instance.
 func StopXray() string {
 	var response nodep.CallResponse[string]

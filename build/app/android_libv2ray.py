@@ -38,6 +38,7 @@ import os
 import subprocess
 
 from app.build import Builder
+from app.android_deploy import deploy_android_aar
 
 
 class AndroidLibV2RayBuilder(Builder):
@@ -51,10 +52,20 @@ class AndroidLibV2RayBuilder(Builder):
         self.libv2ray_dir = os.path.join(self.lib_dir, "libv2ray")
 
     def before_build(self):
-        # Не вызываем super().before_build() — init_go_env / download_geo
-        # делаются один раз в корне libXray (если идёт многотарget билд,
-        # AndroidBuilder это сделает первым). Здесь просто гарантируем,
-        # что gomobile установлен.
+        # 2026-05-20 fix: явно вызываем super().before_build(), который
+        # запускает init_go_env() (go mod init + go get xray-core pinned +
+        # go mod edit -replace=../xray-core + go mod tidy) и download_geo().
+        #
+        # Причина: при запуске `python3 build/main.py android libv2ray`
+        # ОТДЕЛЬНО (без предшествующего AndroidBuilder) replace на ../xray-core
+        # не применялся → бинарь собирался без PR #5805 (chain-mode).
+        # Команда отрабатывала "успешно", артефакт деплоился, но chain-mode
+        # silent broken. Hidden gotcha зафиксирован в _lab/README.md.
+        #
+        # При `android all`: AndroidBuilder.revert_go_env() стирает go.mod
+        # (убирает replace) до того как мы стартуем → нам тоже нужен
+        # свой super().before_build(). Оба сценария требуют этого вызова.
+        super().before_build()
         self.prepare_gomobile()
 
     def build(self):
@@ -82,5 +93,12 @@ class AndroidLibV2RayBuilder(Builder):
             raise Exception("android-libv2ray build failed")
 
         self.after_build()
+
+        # 2026-05-21: автодеплой свежесобранного AAR в production-путь
+        # v2ray_flutter/android/libs/libv2ray.aar. До этого fix'а deploy
+        # был только у Apple-сборщика → юзеру/CI приходилось вручную
+        # копировать (и забывать) → старый AAR оставался в Flutter-проекте
+        # вместе с новыми Apple-артефактами → silent skew между платформами.
+        deploy_android_aar(self.lib_dir)
 
         self.revert_go_env()
