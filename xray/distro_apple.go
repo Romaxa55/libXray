@@ -92,7 +92,16 @@ import (
 
 	// App services.
 	_ "github.com/xtls/xray-core/app/dns"
-	_ "github.com/xtls/xray-core/app/dns/fakedns"
+	// 2026-05-22 (юзер, golang-pro audit): FakeDNS выпилен из distro.
+	// Причина: config-генератор НЕ использует FakeDNS с 2026-05-15
+	// (root-блок выпилен, destOverride без "fakedns", dns.servers без
+	// "fakedns"). Но модуль вкомпилен → registers types через init() +
+	// потенциальный allocation LRU 65535 entries при sniffer-side init.
+	// Старый комментарий "REQUIRED for sniffer mapping" relevant был
+	// только для routeOnly:true + DoH 1.1.1.1 эксперимента — сейчас
+	// routeOnly:false + plain UDP DNS, FakeDNS не нужен.
+	// Если когда-нибудь вернётся — раскомментировать + пересборка.
+	// _ "github.com/xtls/xray-core/app/dns/fakedns"
 	_ "github.com/xtls/xray-core/app/log"
 	_ "github.com/xtls/xray-core/app/observatory"
 	_ "github.com/xtls/xray-core/app/policy"
