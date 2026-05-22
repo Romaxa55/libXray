@@ -188,6 +188,22 @@ func GetObservatoryState(requestJSON string) string {
 	return libxray.GetObservatoryState(requestJSON)
 }
 
+// GetBuildInfo — JSON с метаданными собранной libv2ray (gomobile wrapper):
+// xray_version, go_version, libxray_commit (если VCS-stamping есть),
+// features (карта feature-flags). Главный флаг — pr5805_balancer_dialer.
+//
+// Dart usage:
+//   final info = await V2Ray.getBuildInfo();
+//   if (info['features']['pr5805_balancer_dialer'] != true) {
+//     // upstream xray без форка — chain-mode не работает,
+//     // переключаемся на simple-chain через single outbound.
+//   }
+//
+// См. libXray/xray/build_info.go — там полное объяснение detection-логики.
+func GetBuildInfo() string {
+	return libxray.GetBuildInfo()
+}
+
 // CheckVersionX — устаревший alias для XrayVersion.
 func CheckVersionX() string {
 	return GetV2RayVersion()

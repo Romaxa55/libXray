@@ -225,6 +225,17 @@ func GetObservatoryState(requestJSON string) string {
 	return xray.GetObservatoryState(requestJSON)
 }
 
+// GetBuildInfo — sanity-check метаданных билда. Используется Dart-стороной
+// чтобы понять какая версия libv2ray.a/.aar/.xcframework сейчас подключена
+// (поддерживает ли chain-mode PR #5805, observatory_state API и т.д.).
+//
+// Returns JSON: {"xray_version": "26.5.9", "features": {"pr5805_balancer_dialer": true, ...}}
+//
+// Дёшево: чистое чтение compile-time констант + runtime.Version().
+func GetBuildInfo() string {
+	return xray.GetBuildInfo()
+}
+
 // Stop Xray instance.
 func StopXray() string {
 	var response nodep.CallResponse[string]

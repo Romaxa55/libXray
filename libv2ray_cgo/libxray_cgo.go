@@ -189,6 +189,18 @@ func GetObservatoryState(requestJSON *C.char) *C.char {
 	return C.CString(libxray.GetObservatoryState(req))
 }
 
+// GetBuildInfo — метаданные собранной libv2ray.a (cgo wrapper):
+// xray_version, go_version, features (PR #5805, observatory_state, etc.).
+//
+// Returns C-string JSON. Caller MUST free через Free(ptr).
+//
+// См. libv2ray/libv2ray.go::GetBuildInfo и libXray/xray/build_info.go.
+//
+//export GetBuildInfo
+func GetBuildInfo() *C.char {
+	return C.CString(libxray.GetBuildInfo())
+}
+
 //export GetV2RayStatus
 func GetV2RayStatus() *C.char {
 	if libxray.GetXrayState() {

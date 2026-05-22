@@ -1,0 +1,274 @@
+diff --git a/app/router/balancing.go b/app/router/balancing.go
+index 5f8cb1c21b0b..b39df03f8731 100644
+--- a/app/router/balancing.go
++++ b/app/router/balancing.go
+@@ -134,6 +134,15 @@ func (b *Balancer) SelectOutbounds() ([]string, error) {
+ 	return tags, nil
+ }
+ 
++// PickBalancerOutbound implements routing.BalancerSelector.
++func (r *Router) PickBalancerOutbound(tag string) (string, bool, error) {
++	if b, ok := r.balancers[tag]; ok {
++		outboundTag, err := b.PickOutbound()
++		return outboundTag, true, err
++	}
++	return "", false, nil
++}
++
+ // GetPrincipleTarget implements routing.BalancerPrincipleTarget
+ func (r *Router) GetPrincipleTarget(tag string) ([]string, error) {
+ 	if b, ok := r.balancers[tag]; ok {
+diff --git a/core/xray.go b/core/xray.go
+index 58135c96b800..a4fc0fc805a9 100644
+--- a/core/xray.go
++++ b/core/xray.go
+@@ -230,6 +230,10 @@ func initInstanceWithConfig(config *Config, server *Instance) (bool, error) {
+ 			obm, _ := server.GetFeature(outbound.ManagerType()).(outbound.Manager)
+ 			return obm
+ 		}(),
++		func() routing.BalancerSelector {
++			bs, _ := server.GetFeature(routing.RouterType()).(routing.BalancerSelector)
++			return bs
++		}(),
+ 	)
+ 
+ 	server.resolveLock.Lock()
+diff --git a/features/routing/balancer.go b/features/routing/balancer.go
+index b1a2339f5db2..09687b2b9561 100644
+--- a/features/routing/balancer.go
++++ b/features/routing/balancer.go
+@@ -1,5 +1,9 @@
+ package routing
+ 
++type BalancerSelector interface {
++	PickBalancerOutbound(tag string) (string, bool, error)
++}
++
+ type BalancerOverrider interface {
+ 	SetOverrideTarget(tag, target string) error
+ 	GetOverrideTarget(tag string) (string, error)
+diff --git a/transport/internet/dialer.go b/transport/internet/dialer.go
+index 9342f26f5ff7..890bdf51d93c 100644
+--- a/transport/internet/dialer.go
++++ b/transport/internet/dialer.go
+@@ -13,6 +13,7 @@ import (
+ 	"github.com/xtls/xray-core/common/session"
+ 	"github.com/xtls/xray-core/features/dns"
+ 	"github.com/xtls/xray-core/features/outbound"
++	"github.com/xtls/xray-core/features/routing"
+ 	"github.com/xtls/xray-core/transport"
+ 	"github.com/xtls/xray-core/transport/internet/stat"
+ 	"github.com/xtls/xray-core/transport/pipe"
+@@ -80,8 +81,9 @@ func DestIpAddress() net.IP {
+ }
+ 
+ var (
+-	dnsClient dns.Client
+-	obm       outbound.Manager
++	dnsClient       dns.Client
++	obm             outbound.Manager
++	routingBalancer routing.BalancerSelector
+ )
+ 
+ func LookupForIP(domain string, strategy DomainStrategy, localAddr net.Address) ([]net.IP, error) {
+@@ -136,6 +138,36 @@ func redirect(ctx context.Context, dst net.Destination, obt string, h outbound.H
+ 
+ }
+ 
++func resolveDialerProxy(ctx context.Context, tag string) (string, outbound.Handler, error) {
++	if obm == nil {
++		return "", nil, errors.New("there is no outbound manager for dialerProxy").AtError()
++	}
++
++	if h := obm.GetHandler(tag); h != nil {
++		return tag, h, nil
++	}
++
++	if routingBalancer != nil {
++		resolvedTag, found, err := routingBalancer.PickBalancerOutbound(tag)
++		if found {
++			if err != nil {
++				return "", nil, errors.New("failed to get outbound from dialerProxy balancer ", tag).Base(err).AtError()
++			}
++			if len(resolvedTag) == 0 {
++				return "", nil, errors.New("dialerProxy balancer ", tag, " returned empty outbound tag").AtError()
++			}
++			h := obm.GetHandler(resolvedTag)
++			if h == nil {
++				return "", nil, errors.New("there is no outbound handler for dialerProxy balancer target ", resolvedTag).AtError()
++			}
++			errors.LogInfo(ctx, "resolved dialerProxy balancer ", tag, " to outbound ", resolvedTag)
++			return resolvedTag, h, nil
++		}
++	}
++
++	return "", nil, errors.New("there is no outbound handler for dialerProxy").AtError()
++}
++
+ func checkAddressPortStrategy(ctx context.Context, dest net.Destination, sockopt *SocketConfig) (*net.Destination, error) {
+ 	if sockopt.AddressPortStrategy == AddressPortStrategy_None {
+ 		return nil, nil
+@@ -269,20 +301,18 @@ func DialSystem(ctx context.Context, dest net.Destination, sockopt *SocketConfig
+ 	}
+ 
+ 	if len(sockopt.DialerProxy) > 0 {
+-		if obm == nil {
+-			return nil, errors.New("there is no outbound manager for dialerProxy").AtError()
+-		}
+-		h := obm.GetHandler(sockopt.DialerProxy)
+-		if h == nil {
+-			return nil, errors.New("there is no outbound handler for dialerProxy").AtError()
++		tag, h, err := resolveDialerProxy(ctx, sockopt.DialerProxy)
++		if err != nil {
++			return nil, err
+ 		}
+-		return redirect(ctx, dest, sockopt.DialerProxy, h), nil
++		return redirect(ctx, dest, tag, h), nil
+ 	}
+ 
+ 	return effectiveSystemDialer.Dial(ctx, src, dest, sockopt)
+ }
+ 
+-func InitSystemDialer(dc dns.Client, om outbound.Manager) {
++func InitSystemDialer(dc dns.Client, om outbound.Manager, bs routing.BalancerSelector) {
+ 	dnsClient = dc
+ 	obm = om
++	routingBalancer = bs
+ }
+diff --git a/transport/internet/dialer_balancer_test.go b/transport/internet/dialer_balancer_test.go
+new file mode 100644
+index 000000000000..01ae83ba0133
+--- /dev/null
++++ b/transport/internet/dialer_balancer_test.go
+@@ -0,0 +1,131 @@
++package internet
++
++import (
++	"context"
++	stderrors "errors"
++	"strings"
++	"testing"
++
++	"github.com/xtls/xray-core/common/serial"
++	"github.com/xtls/xray-core/features/outbound"
++	"github.com/xtls/xray-core/transport"
++)
++
++type testOutboundManager struct {
++	handlers map[string]outbound.Handler
++	lookups  []string
++}
++
++func (*testOutboundManager) Start() error { return nil }
++
++func (*testOutboundManager) Close() error { return nil }
++
++func (*testOutboundManager) Type() interface{} { return outbound.ManagerType() }
++
++func (m *testOutboundManager) GetHandler(tag string) outbound.Handler {
++	m.lookups = append(m.lookups, tag)
++	return m.handlers[tag]
++}
++
++func (m *testOutboundManager) GetDefaultHandler() outbound.Handler { return nil }
++
++func (*testOutboundManager) AddHandler(context.Context, outbound.Handler) error { return nil }
++
++func (*testOutboundManager) RemoveHandler(context.Context, string) error { return nil }
++
++func (*testOutboundManager) ListHandlers(context.Context) []outbound.Handler { return nil }
++
++type testOutboundHandler struct {
++	tag string
++}
++
++func (h *testOutboundHandler) Start() error { return nil }
++
++func (h *testOutboundHandler) Close() error { return nil }
++
++func (h *testOutboundHandler) Tag() string { return h.tag }
++
++func (*testOutboundHandler) Dispatch(context.Context, *transport.Link) {}
++
++func (*testOutboundHandler) SenderSettings() *serial.TypedMessage { return nil }
++
++func (*testOutboundHandler) ProxySettings() *serial.TypedMessage { return nil }
++
++type testBalancerSelector struct {
++	outboundTag string
++	found       bool
++	err         error
++	calls       int
++}
++
++func (s *testBalancerSelector) PickBalancerOutbound(string) (string, bool, error) {
++	s.calls++
++	return s.outboundTag, s.found, s.err
++}
++
++func TestResolveDialerProxyUsesBalancerTag(t *testing.T) {
++	handler := &testOutboundHandler{tag: "proxy"}
++	manager := &testOutboundManager{
++		handlers: map[string]outbound.Handler{
++			"proxy": handler,
++		},
++	}
++	selector := &testBalancerSelector{
++		outboundTag: "proxy",
++		found:       true,
++	}
++
++	prevObm := obm
++	prevRoutingBalancer := routingBalancer
++	obm = manager
++	routingBalancer = selector
++	t.Cleanup(func() {
++		obm = prevObm
++		routingBalancer = prevRoutingBalancer
++	})
++
++	tag, gotHandler, err := resolveDialerProxy(context.Background(), "balancer")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if tag != "proxy" {
++		t.Fatalf("unexpected outbound tag: got %q want %q", tag, "proxy")
++	}
++	if gotHandler != handler {
++		t.Fatalf("unexpected outbound handler: got %v want %v", gotHandler, handler)
++	}
++	if selector.calls != 1 {
++		t.Fatalf("unexpected balancer call count: got %d want %d", selector.calls, 1)
++	}
++	if diff := strings.Join(manager.lookups, ","); diff != "balancer,proxy" {
++		t.Fatalf("unexpected lookup order: got %q want %q", diff, "balancer,proxy")
++	}
++}
++
++func TestResolveDialerProxyReturnsBalancerError(t *testing.T) {
++	manager := &testOutboundManager{}
++	selector := &testBalancerSelector{
++		found: true,
++		err:   stderrors.New("no candidates"),
++	}
++
++	prevObm := obm
++	prevRoutingBalancer := routingBalancer
++	obm = manager
++	routingBalancer = selector
++	t.Cleanup(func() {
++		obm = prevObm
++		routingBalancer = prevRoutingBalancer
++	})
++
++	_, _, err := resolveDialerProxy(context.Background(), "balancer")
++	if err == nil {
++		t.Fatal("expected an error")
++	}
++	if !strings.Contains(err.Error(), "failed to get outbound from dialerProxy balancer") {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	if diff := strings.Join(manager.lookups, ","); diff != "balancer" {
++		t.Fatalf("unexpected lookup order: got %q want %q", diff, "balancer")
++	}
++}
