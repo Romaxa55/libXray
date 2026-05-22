@@ -116,14 +116,25 @@ import (
 	_ "github.com/xtls/xray-core/proxy/trojan"
 	_ "github.com/xtls/xray-core/proxy/vless/outbound"
 	_ "github.com/xtls/xray-core/proxy/vmess/outbound"
-	_ "github.com/xtls/xray-core/proxy/wireguard"
+	// 2026-05-22 (юзер, memory audit): wireguard выпилен из distro.
+	// Причина: тянет gvisor.dev/gvisor/pkg/tcpip/* в proxy/wireguard/tun.go
+	// (нет darwin build constraint) → BSS секция gVisor вкомпиливается
+	// в бинарь. data_v5.dat не содержит wireguard серверов. Если когда-
+	// нибудь backend начнёт их выдавать — добавить обратно + пересборка.
+	// _ "github.com/xtls/xray-core/proxy/wireguard"
 
 	// Transports.
-	_ "github.com/xtls/xray-core/transport/internet/grpc"
+	// 2026-05-22 memory audit: kcp/grpc/splithttp выпилены.
+	//   - kcp: mKCP — legacy 2018, в data_v5.dat нет mkcp серверов.
+	//   - grpc: не используется в наших configs (только tcp/ws/reality).
+	//     gRPC регистрация = HTTP/2 framer + 64KB flow-control state.
+	//   - splithttp: experimental транспорт 2024, нет в data_v5.dat.
+	//   - httpupgrade: используется CF Workers — ОСТАВЛЯЕМ.
+	// _ "github.com/xtls/xray-core/transport/internet/grpc"
 	_ "github.com/xtls/xray-core/transport/internet/httpupgrade"
-	_ "github.com/xtls/xray-core/transport/internet/kcp"
+	// _ "github.com/xtls/xray-core/transport/internet/kcp"
 	_ "github.com/xtls/xray-core/transport/internet/reality"
-	_ "github.com/xtls/xray-core/transport/internet/splithttp"
+	// _ "github.com/xtls/xray-core/transport/internet/splithttp"
 	_ "github.com/xtls/xray-core/transport/internet/tcp"
 	_ "github.com/xtls/xray-core/transport/internet/tls"
 	_ "github.com/xtls/xray-core/transport/internet/udp"

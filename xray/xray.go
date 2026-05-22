@@ -116,6 +116,19 @@ func StopXray() error {
 		err := coreServer.Close()
 		coreServer = nil
 		syncCoreServerPtr() // 2026-05-18: thread-safe snapshot для ProbeOutbound
+
+		// 2026-05-22 (юзер, golang-pro audit): после coreServer.Close()
+		// Go куча освобождает весь xray heap (~10-20 MB), но не возвращает
+		// OS немедленно. На iOS NE jetsam считает RSS, не Go heap —
+		// после Close() без явного FreeOSMemory() ~15MB всё ещё в RSS
+		// несколько секунд. Это критично при reconnect: stop → start
+		// = двойной peak.
+		debug.FreeOSMemory()
+
+		// Очищаем route tracker — старые tags от прошлой сессии не
+		// должны светиться в observatory snapshot до первого dial'а.
+		resetRoutes()
+
 		if err != nil {
 			return err
 		}
