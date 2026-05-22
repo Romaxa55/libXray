@@ -4,53 +4,63 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/xtls/xray-core/app/observatory"
 	"github.com/xtls/xray-core/features/extension"
 )
 
-// 2026-05-21: balancer winner logic вынесена в Dart-сторону.
+// 2026-05-22: контракт NE → Dart упрощён до минимально-необходимого.
 //
-// Изначально планировали возвращать current winner для каждого balancer'а из
-// xray-config (BOOTSTRAP-BAL, auto-balancer). Через routing.BalancerSelector
-// interface — но в pinned xray-core@v1.260327.1 этот интерфейс не существует
-// (есть только BalancerOverrider/BalancerPrincipleTarget). PickOutbound() есть
-// в `app/router/Balancer` но это конкретный тип, не interface, и доступ к нему
-// через features/routing наружу не предусмотрен.
+// Dart получает 4 поля на узел (tag, role, alive, delay_ms) и сам делает
+// геолокацию через `data_v5.dat` (sync SQL lookup по id из тега).
+// Winner определяется НА СТОРОНЕ GO (через role=active_*) — Dart не считает
+// minDelay. Это упрощает Dart-логику и убирает дублирование (раньше Dart
+// делал тот же minDelay alive что и xray observatory leastPing strategy).
 //
-// Решение: Go отдаёт сырые `delay_ms` для всех узлов, Dart сам считает winner
-// = min(delay_ms) среди alive=true. Это ровно та же логика что использует
-// xray-core leastPing strategy внутри (strategy_leastping.go:30).
-//
-// Архитектурный плюс: native просто "telemetry source", вся логика на Dart →
-// проще тестировать, проще менять без пересборки libXray.
+// Никаких живых HTTP-probe на ip.megav.app — координаты/страны уже в БД.
 
-// NodeJSON — состояние одного outbound'а из observatory'а. Поля совпадают
-// с `observatory.OutboundStatus`, плюс развёрнутые HealthPing stats для
-// плавной анимации (Average vs Max диапазон → толщина линии на карте).
+// NodeJSON — минимальный контракт на узел.
+//
+//	tag      — outbound tag из xray-config ("bs-391", "server-7716", и т.д.)
+//	role     — "bootstrap" | "active_bootstrap" | "exit" | "active_exit" | "other"
+//	           active_* = winner в своей категории (min delay_ms среди alive).
+//	alive    — *bool (true/false/null). null = observatory ещё не пробовал
+//	           этот outbound (cold start, ping_all == 0). Dart рисует unknown.
+//	delay_ms — RTT в миллисекундах для tooltip / RTT-надписи на маршруте.
+//	           0 если alive=false или null.
+//	route    — реальный маршрут последнего dial'а этого outbound'а.
+//	           "" = ещё не dial'или (или это служебный outbound: direct/block/dns-out)
+//	           "via:bs-N"     = chain работает, dial через указанный bs
+//	           "fallback:direct" = chain свалился, dial идёт через direct (наш
+//	                              dialerProxyFallback feature сработал)
+//	           "direct"       = config БЕЗ dialerProxy (legacy mode), прямой dial
+//	           Dart использует это для отрисовки реальных линий на карте:
+//	           "via:bs-N" → линия exit→bs→user
+//	           "fallback:..." → пунктир exit→user (без bs, отражает обход chain)
 type NodeJSON struct {
-	Tag       string `json:"tag"`
-	Alive     bool   `json:"alive"`
-	DelayMs   int64  `json:"delay_ms"`
-	LastErr   string `json:"last_error,omitempty"`
-	LastSeen  int64  `json:"last_seen_ms,omitempty"`
-	LastTry   int64  `json:"last_try_ms,omitempty"`
-	PingAll   int64  `json:"ping_all,omitempty"`   // сколько раз пробили всего
-	PingFail  int64  `json:"ping_fail,omitempty"`  // сколько фейлов из них
-	PingAvg   int64  `json:"ping_avg,omitempty"`   // среднее RTT
-	PingMax   int64  `json:"ping_max,omitempty"`   // макс RTT
-	PingMin   int64  `json:"ping_min,omitempty"`   // мин RTT
-	PingDev   int64  `json:"ping_deviation,omitempty"` // дисперсия (стабильность)
+	Tag     string `json:"tag"`
+	Role    string `json:"role"`
+	Alive   *bool  `json:"alive"` // pointer → JSON-encoder выдаст null для unknown
+	DelayMs int64  `json:"delay_ms"`
+	Route   string `json:"route,omitempty"` // "" = нет данных, omitempty для compact JSON
 }
 
+// Role строки. Константы вместо magic strings — чтобы менять централизованно
+// и не разбегаться по проекту с typos типа "active-bootstrap" vs "active_bootstrap".
+const (
+	RoleBootstrap       = "bootstrap"
+	RoleActiveBootstrap = "active_bootstrap"
+	RoleExit            = "exit"
+	RoleActiveExit      = "active_exit"
+	RoleOther           = "other" // direct, block, dns-out, fragment-*, и т.п.
+)
+
 // ObservatoryStateResponse — итоговый JSON для Dart.
-// nodes — состояние всех outbound'ов которые observatory мониторит
-//   (т.е. перечислены в burstObservatory.subjectSelector).
-// timestamp_ms — unix-ms когда снимок был взят (на стороне Go).
+// nodes — все outbound'ы из subjectSelector с ролями и alive-статусом.
+// timestamp_ms — unix-ms (когда снимок взят, Go-side).
 // error — заполнено если что-то пошло не так. nodes тогда пустой.
-//
-// Winner balancer'а Dart считает сам: min(delay_ms) среди alive=true.
 type ObservatoryStateResponse struct {
 	Nodes       []NodeJSON `json:"nodes"`
 	TimestampMs int64      `json:"timestamp_ms"`
@@ -150,35 +160,97 @@ func GetObservatoryState(requestJSON string) string {
 		return marshalObservatoryResp(resp)
 	}
 
-	// 5. Конвертим []OutboundStatus → []NodeJSON.
-	//    HealthPing nested message — может быть nil если observatory ещё
-	//    не успел сделать ни одного round'а (cold start <30s после connect).
-	nodes := make([]NodeJSON, 0, len(result.GetStatus()))
-	for _, s := range result.GetStatus() {
-		n := NodeJSON{
-			Tag:      s.GetOutboundTag(),
-			Alive:    s.GetAlive(),
-			DelayMs:  s.GetDelay(),
-			LastErr:  s.GetLastErrorReason(),
-			LastSeen: s.GetLastSeenTime(),
-			LastTry:  s.GetLastTryTime(),
-		}
-		if hp := s.GetHealthPing(); hp != nil {
-			n.PingAll = hp.GetAll()
-			n.PingFail = hp.GetFail()
-			// HealthPing хранит durations в **наносекундах** (см.
-			// xray-core/app/observatory/burst/healthping.go::getStatistics —
-			// возвращает time.Duration). Мы делим на 1e6 чтобы Dart получил
-			// миллисекунды, как и delay_ms сверху.
-			n.PingAvg = hp.GetAverage() / 1_000_000
-			n.PingMax = hp.GetMax() / 1_000_000
-			n.PingMin = hp.GetMin() / 1_000_000
-			n.PingDev = hp.GetDeviation() / 1_000_000
-		}
-		nodes = append(nodes, n)
-	}
-	resp.Nodes = nodes
+	// 5. Конвертим []OutboundStatus → []NodeJSON в два прохода:
+	//
+	//    Pass 1: собираем сырые данные (tag, alive*, delay). alive — pointer,
+	//    null когда observatory ещё не пробовала этот outbound (ping_all == 0
+	//    из HealthPing → cold start, статус unknown). False → точно мёртв.
+	//
+	//    Pass 2: находим winner'ов (bs-* и server-* отдельно) — min delay
+	//    среди alive=true. Это та же логика что и leastPing strategy в xray
+	//    (strategy_leastping.go:30), но применённая ЗДЕСЬ чтобы пометить role
+	//    как active_*. Dart не должен дублировать вычисление winner'а.
+	statuses := result.GetStatus()
+	rawNodes := make([]NodeJSON, 0, len(statuses))
 
+	for _, s := range statuses {
+		tag := s.GetOutboundTag()
+		delay := s.GetDelay()
+
+		// alive: null если observatory не делала probe (ping_all==0).
+		// xray ставит status.Alive=false в нескольких случаях:
+		//  (a) реальный fail — пинг был, не прошёл
+		//  (b) cold start — observation добавлен в массив но еще ни одной попытки
+		// Чтобы различать — смотрим healthping.GetAll(). Если 0 — это cold start,
+		// alive=null. Иначе доверяем s.GetAlive().
+		var aliveVal *bool
+		if hp := s.GetHealthPing(); hp != nil && hp.GetAll() > 0 {
+			v := s.GetAlive()
+			aliveVal = &v
+		} else if delay > 0 {
+			// Edge case: HealthPing nil/empty но delay есть → значит пинг был
+			// и прошёл (xray-core fills delay только при успешном пинге).
+			// Считаем alive=true.
+			t := true
+			aliveVal = &t
+		}
+		// иначе aliveVal остаётся nil → JSON encode null → Dart рисует unknown
+
+		rawNodes = append(rawNodes, NodeJSON{
+			Tag:     tag,
+			Alive:   aliveVal,
+			DelayMs: delay,
+			Route:   getRoute(tag), // "" если ни разу не dial'или
+		})
+	}
+
+	// Pass 2: winner'ы (min delay среди alive=true) для двух категорий.
+	bsWinnerIdx, exitWinnerIdx := -1, -1
+	var bsWinnerDelay, exitWinnerDelay int64 = -1, -1
+	for i, n := range rawNodes {
+		if n.Alive == nil || !*n.Alive {
+			continue
+		}
+		// delay_ms может быть 0 для свежеподнятого alive выше (edge case без
+		// healthping). Это не «лучший» сервер — пропускаем как кандидата на
+		// winner'а если у нас уже есть кандидат с положительным delay.
+		if n.DelayMs <= 0 {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(n.Tag, "bs-"):
+			if bsWinnerIdx == -1 || n.DelayMs < bsWinnerDelay {
+				bsWinnerIdx, bsWinnerDelay = i, n.DelayMs
+			}
+		case strings.HasPrefix(n.Tag, "server-"):
+			if exitWinnerIdx == -1 || n.DelayMs < exitWinnerDelay {
+				exitWinnerIdx, exitWinnerDelay = i, n.DelayMs
+			}
+		}
+	}
+
+	// Pass 3: проставляем role. Категория по prefix tag'а, active_* для winner'ов.
+	for i := range rawNodes {
+		tag := rawNodes[i].Tag
+		switch {
+		case strings.HasPrefix(tag, "bs-"):
+			if i == bsWinnerIdx {
+				rawNodes[i].Role = RoleActiveBootstrap
+			} else {
+				rawNodes[i].Role = RoleBootstrap
+			}
+		case strings.HasPrefix(tag, "server-"):
+			if i == exitWinnerIdx {
+				rawNodes[i].Role = RoleActiveExit
+			} else {
+				rawNodes[i].Role = RoleExit
+			}
+		default:
+			rawNodes[i].Role = RoleOther
+		}
+	}
+
+	resp.Nodes = rawNodes
 	return marshalObservatoryResp(resp)
 }
 

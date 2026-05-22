@@ -48,6 +48,17 @@ class Builder(object):
         if ret.returncode != 0:
             raise Exception("go get xray-core pinned commit failed")
 
+        # 2026-05-20: replace на ЛОКАЛЬНЫЙ форк xray-core с PR #5805.
+        # Папка `../xray-core` относительно `libXray/` — клонируется вручную (см. .gitignore).
+        # Содержит upstream-commit ad68fd33 + applied patch
+        # `libXray/patches/0001-pr-5805-dialer-proxy-balancer.patch` (PR #5805 — резолв
+        # balancer-tag в sockopt.dialerProxy для chain-mode VPN, см. _lab/README.md).
+        ret = subprocess.run(
+            ["go", "mod", "edit", "-replace=github.com/xtls/xray-core=../xray-core"]
+        )
+        if ret.returncode != 0:
+            raise Exception("go mod edit -replace ../xray-core failed")
+
         ret = subprocess.run(
             [
                 "go",
@@ -170,29 +181,20 @@ class Builder(object):
             raise Exception(f"build_desktop_bin failed")
 
     def revert_go_env(self):
-        os.chdir(self.lib_dir)
-        self.clean_lib_files(["go.mod", "go.sum"])
-        ret = subprocess.run(["go", "mod", "init", LIBXRAY_MOD_NAME])
-        if ret.returncode != 0:
-            raise Exception("go mod init failed")
+        """No-op (2026-05-22 MegaV): раньше после сборки эта функция
+        сбрасывала go.mod на upstream xray-core (без `replace=../xray-core`).
+        Это создавало проблемы: следующая команда сборки (apple_gomobile cgo
+        для другой архитектуры, или ad-hoc `go build ./desktop_bin`)
+        собиралась с UPSTREAM xray-core — без наших патчей (PR #5805,
+        dialer_proxy_fallback_tag, SetRouteNotifier).
 
-        # MegaV-patch 2026-05-18: тот же pin что в init_go_env (см. выше).
-        ret = subprocess.run(
-            [
-                "go",
-                "get",
-                "github.com/xtls/xray-core@1bdb488c9ec09ea51e6899697d5b7437f3cf6eb2",
-            ]
-        )
-        if ret.returncode != 0:
-            raise Exception("go get xray-core pinned commit failed in revert")
+        Юзер 2026-05-22: «убери нахуй пусть всегда идёт через нашу форк».
+        Теперь go.mod ВСЕГДА содержит `replace=../xray-core` после
+        `init_go_env()`. Никаких revert'ов. Это правильно — форк это
+        единственный авторитетный источник, IDE/dev-tools тоже видят
+        наш форк (это _фича_, не баг).
 
-        ret = subprocess.run(
-            [
-                "go",
-                "mod",
-                "tidy",
-            ]
-        )
-        if ret.returncode != 0:
-            raise Exception("go mod tidy failed")
+        Если когда-нибудь форк удалят и нужен будет upstream — это можно
+        сделать вручную через `go mod edit -dropreplace=github.com/xtls/xray-core`.
+        """
+        print("[build] revert_go_env: no-op (replace=../xray-core stays active)")
