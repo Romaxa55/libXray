@@ -55,16 +55,29 @@ class AppleGoMobileBuilder(Builder):
         if not os.path.isdir(libv2ray_dir):
             raise Exception(f"libv2ray/ subpackage not found: {libv2ray_dir}")
 
+        # 2026-05-23 (юзер): env-var LIBV2RAY_PPROF=1 вкомпиливает
+        # net/http/pprof в Libv2ray.xcframework. Включает StartPprof() /
+        # StopPprof() из libv2ray/pprof.go (build tag pprof_enabled).
+        # Без env-var → stub из libv2ray/pprof_stub.go (релиз).
+        # См. libv2ray/pprof.go header для инструкции iproxy.
+        build_tags = []
+        if os.environ.get("LIBV2RAY_PPROF") == "1":
+            build_tags.append("pprof_enabled")
+            print("[apple_gomobile] LIBV2RAY_PPROF=1 → adding -tags pprof_enabled")
+
+        gomobile_cmd = [
+            "gomobile", "bind",
+            "-target", "ios,iossimulator,macos,maccatalyst",
+            "-iosversion", "15.0",
+        ]
+        if build_tags:
+            gomobile_cmd.extend(["-tags", ",".join(build_tags)])
+        gomobile_cmd.append(".")
+
         print(f"[apple_gomobile] gomobile bind {libv2ray_dir}")
+        print(f"[apple_gomobile] cmd: {' '.join(gomobile_cmd)}")
         os.chdir(libv2ray_dir)
-        ret = subprocess.run(
-            [
-                "gomobile", "bind",
-                "-target", "ios,iossimulator,macos,maccatalyst",
-                "-iosversion", "15.0",
-                ".",
-            ]
-        )
+        ret = subprocess.run(gomobile_cmd)
         if ret.returncode != 0:
             raise Exception("gomobile bind failed")
 

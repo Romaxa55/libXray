@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
+	_ "net/http/pprof" // 2026-05-22: pprof memory-analyzer (desktop only)
 	"os"
 	"os/signal"
 	"runtime"
@@ -35,7 +37,24 @@ func main() {
 	observatoryState := flag.Bool("observatoryState", false, "После старта подождать --observatoryWait сек и напечатать ObservatoryState JSON")
 	observatoryWait := flag.Int("observatoryWait", 35, "Сколько секунд ждать observatory'у на раунды probe перед snapshot'ом (default 35 = чуть больше observatoryInterval=30s)")
 	observatoryPoll := flag.Int("observatoryPoll", 0, "Если >0 — печатать ObservatoryState каждые N сек (стрим, для отладки live-обновления). 0 = single shot.")
+	// 2026-05-22 (юзер): pprof HTTP endpoint для memory profiler.
+	// Использование: ./xray-megav-pprof --xrayConfig=... --keepRunning --pprofPort=6060
+	// Затем: go tool pprof http://localhost:6060/debug/pprof/heap
+	pprofPort := flag.Int("pprofPort", 0, "Если >0 — запустить pprof HTTP server на localhost:N (memory analyzer). 0 = выключено.")
 	flag.Parse()
+
+	if *pprofPort > 0 {
+		go func() {
+			addr := fmt.Sprintf("localhost:%d", *pprofPort)
+			fmt.Fprintf(os.Stderr, "[pprof] HTTP server: http://%s/debug/pprof/\n", addr)
+			fmt.Fprintf(os.Stderr, "[pprof] heap:       go tool pprof http://%s/debug/pprof/heap\n", addr)
+			fmt.Fprintf(os.Stderr, "[pprof] goroutines: go tool pprof http://%s/debug/pprof/goroutine\n", addr)
+			fmt.Fprintf(os.Stderr, "[pprof] stats raw:  curl http://%s/debug/vars\n", addr)
+			if err := http.ListenAndServe(addr, nil); err != nil {
+				fmt.Fprintf(os.Stderr, "[pprof] server error: %v\n", err)
+			}
+		}()
+	}
 
 	// 0. --convertUrl: одноразовая конвертация URL → JSON через native parser.
 	// Полезно для дебага: проверить что Go-парсер реально кладёт в
