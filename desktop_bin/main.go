@@ -31,6 +31,10 @@ func main() {
 	probeConcurrency := flag.Int("probeConcurrency", 5, "Сколько параллельных probe запускать (5 норм для iOS 50MB cap)")
 	keepRunning := flag.Bool("keepRunning", false, "После probe не выходить (для curl-тестов вручную)")
 	convertUrl := flag.String("convertUrl", "", "Конвертирует share-URL (vless://, vmess://, trojan://, ss://) в xray-config JSON через нативный парсер libxray. Печатает в stdout и выходит.")
+	// Обратный конвертер: xray-config JSON → share-URL'ы (по одному на outbound).
+	// Имя outbound (tag/name) уезжает в #fragment URL'а — это и есть точка
+	// ребрендинга: ставим tag="MegaV — <country>" → на выходе ...#MegaV%20—%20...
+	convertJson := flag.String("convertJson", "", "Путь к xray-config JSON. Конвертирует его outbounds в share-URL'ы (vless://...#name) через нативный share.ConvertXrayJsonToShareLinks. Печатает по одной ссылке на строку и выходит.")
 	// Observatory state режим: ждёт N сек после старта (чтобы observatory сделал
 	// несколько раундов probe), потом вызывает GetObservatoryState и печатает JSON.
 	// Используется для lab-проверки нового API до сборки libXray для мобилок.
@@ -74,6 +78,25 @@ func main() {
 		return
 	}
 
+	// 0b. --convertJson: обратная конвертация xray-config JSON → share-URL'ы.
+	// Имя каждого outbound (tag) попадает в #fragment URL'а через
+	// share.getOutboundName — поэтому это естественная точка ребрендинга:
+	// присвоил outbound.tag = "MegaV — Belgium" → получил vless://...#MegaV...
+	if *convertJson != "" {
+		jsonBytes, err := os.ReadFile(*convertJson)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "FAILED to read %s: %v\n", *convertJson, err)
+			os.Exit(1)
+		}
+		links, err := share.ConvertXrayJsonToShareLinks(jsonBytes)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "FAILED: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(links)
+		return
+	}
+
 	// 1. Старт xray по одному из двух путей
 	var startErr error
 	if *xrayConfig != "" {
@@ -81,7 +104,7 @@ func main() {
 	} else if *configPath != "" {
 		startErr = runXray(*configPath)
 	} else {
-		fmt.Fprintln(os.Stderr, "ERROR: укажи либо --configPath, либо --xrayConfig, либо --convertUrl")
+		fmt.Fprintln(os.Stderr, "ERROR: укажи либо --configPath, либо --xrayConfig, либо --convertUrl, либо --convertJson")
 		flag.Usage()
 		os.Exit(2)
 	}

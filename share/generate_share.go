@@ -301,6 +301,9 @@ func streamSettingsQuery(proxy conf.OutboundDetourConfig, link *url.URL) {
 		if err != nil {
 			break
 		}
+		if header == nil {
+			break
+		}
 
 		headerType := header.Type
 		if len(headerType) > 0 {
@@ -336,6 +339,9 @@ func streamSettingsQuery(proxy conf.OutboundDetourConfig, link *url.URL) {
 		var header *XrayFakeHeader
 		err := json.Unmarshal(headerConfig, &header)
 		if err != nil {
+			break
+		}
+		if header == nil {
 			break
 		}
 
