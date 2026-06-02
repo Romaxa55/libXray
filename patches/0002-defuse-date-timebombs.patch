@@ -1,0 +1,104 @@
+diff --git a/common/utils/browser.go b/common/utils/browser.go
+index 957f49b7..ca6d2f6d 100644
+--- a/common/utils/browser.go
++++ b/common/utils/browser.go
+@@ -22,12 +22,15 @@ var globalRng *rand.Rand = GetRandomizer()
+ 
+ // The Chrome version generator will suffer from deviation of a normal distribution.
+ func ChromeVersion() int {
+-	// Start from Chrome 144, released on 2026.1.13.
+-	var startVersion int = 144
+-	var timeStart int64 = time.Date(2026, 1, 13, 0, 0, 0, 0, time.UTC).Unix() / 86400
++	// MegaV 2026-06-02: re-anchored to keep the masqueraded fingerprint current.
++	// Chrome 149 was stable on 2026-06-02; upstream anchor (144 @ 2026-01-13) had
++	// drifted ~3 versions behind, making the UA look like an outdated browser to DPI.
++	// Anchor at today's top version with no startup offset so rng=0 == real latest.
++	var startVersion int = 149
++	var timeStart int64 = time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC).Unix() / 86400
+ 	var timeCurrent int64 = time.Now().Unix() / 86400
+-	var timeDiff int = int((timeCurrent - timeStart - 35)) - int(math.Floor(math.Pow(globalRng.Float64(), 2) * 105))
+-	return startVersion + (timeDiff / 35) // It's 31.15 currently.
++	var timeDiff int = int(timeCurrent-timeStart) - int(math.Floor(math.Pow(globalRng.Float64(), 2)*105))
++	return startVersion + (timeDiff / 35) // cadence ~35 days/major
+ }
+ 
+ var safariMinorMap [25]int = [25]int{0, 0, 0, 1, 1,
+@@ -36,19 +39,22 @@ var safariMinorMap [25]int = [25]int{0, 0, 0, 1, 1,
+ 
+ // The following version generators use deterministic generators, but with the distribution scaled by a curve.
+ func CurlVersion() string {
+-	// curl 8.0.0 was released on 20/03/2023.
++	// MegaV 2026-06-02: re-anchored. curl 8.20.0 was stable on 2026-04-29 (latest
++	// on 2026-06-02). Anchor minor 20 at today with no offset so rng=0 == 8.20.
+ 	var timeCurrent int64 = time.Now().Unix() / 86400
+-	var timeStart int64 = time.Date(2023, 3, 20, 0, 0, 0, 0, time.UTC).Unix() / 86400
+-	var timeDiff int = int((timeCurrent - timeStart - 60)) - int(math.Floor(math.Pow(globalRng.Float64(), 2) * 165))
+-	var minorValue int = int(timeDiff / 57) // The release cadence is actually 56.67 days.
++	var timeStart int64 = time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC).Unix() / 86400
++	var timeDiff int = int(timeCurrent-timeStart) - int(math.Floor(math.Pow(globalRng.Float64(), 2)*165))
++	var minorValue int = 20 + int(timeDiff/57) // cadence ~56.67 days/minor
+ 	return "8." + strconv.Itoa(minorValue) + ".0"
+ }
+ func FirefoxVersion() int {
+-	// Firefox 128 ESR was released on 09/07/2023.
++	// MegaV 2026-06-02: re-anchored. Firefox 151 was stable on 2026-06-01 (latest
++	// on 2026-06-02). Upstream anchor (128 @ 2024-07-29) drifted ~3 behind. Anchor
++	// at today's top version with no offset so rng=0 == real latest.
+ 	var timeCurrent int64 = time.Now().Unix() / 86400
+-	var timeStart int64 = time.Date(2024, 7, 29, 0, 0, 0, 0, time.UTC).Unix() / 86400
+-	var timeDiff = timeCurrent - timeStart - 25 - int64(math.Floor(math.Pow(globalRng.Float64(), 2) * 50))
+-	return int(timeDiff / 30) + 128
++	var timeStart int64 = time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC).Unix() / 86400
++	var timeDiff = timeCurrent - timeStart - int64(math.Floor(math.Pow(globalRng.Float64(), 2)*50))
++	return int(timeDiff/30) + 151
+ }
+ func SafariVersion() string {
+ 	var anchoredTime time.Time = time.Now()
+diff --git a/infra/conf/transport_internet.go b/infra/conf/transport_internet.go
+index 15856468..4d8c7dcc 100644
+--- a/infra/conf/transport_internet.go
++++ b/infra/conf/transport_internet.go
+@@ -13,7 +13,6 @@ import (
+ 	"strconv"
+ 	"strings"
+ 	"syscall"
+-	"time"
+ 
+ 	"github.com/xtls/xray-core/common"
+ 	"github.com/xtls/xray-core/common/errors"
+@@ -704,12 +703,13 @@ func (c *TLSConfig) Build() (proto.Message, error) {
+ 	config.MasterKeyLog = c.MasterKeyLog
+ 
+ 	if c.AllowInsecure {
+-		if time.Now().After(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)) {
+-			return nil, errors.PrintRemovedFeatureError(`"allowInsecure"`, `"pinnedPeerCertSha256"`)
+-		} else {
+-			errors.LogWarning(context.Background(), `"allowInsecure" will be removed automatically after 2026-06-01, please use "pinnedPeerCertSha256"(pcs) and "verifyPeerCertByName"(vcn) instead, PLEASE CONTACT YOUR SERVICE PROVIDER (AIRPORT)`)
+-			config.AllowInsecure = true
+-		}
++		// MegaV fork: upstream xray-core hard-fails on allowInsecure after
++		// 2026-06-01, which silently breaks every shipped client whose config
++		// still carries the flag (CF Workers fronts with mismatched certs).
++		// We degrade to a warning instead of fatal so existing builds keep
++		// working until the generator migrates off allowInsecure.
++		errors.LogWarning(context.Background(), `"allowInsecure" is deprecated upstream; kept enabled in MegaV fork. Migrate to "pinnedPeerCertSha256"(pcs)/"verifyPeerCertByName"(vcn).`)
++		config.AllowInsecure = true
+ 	}
+ 	if c.PinnedPeerCertSha256 != "" {
+ 		for v := range strings.SplitSeq(c.PinnedPeerCertSha256, ",") {
+diff --git a/transport/internet/hysteria/dialer.go b/transport/internet/hysteria/dialer.go
+index dfaac92f..3b11717d 100644
+--- a/transport/internet/hysteria/dialer.go
++++ b/transport/internet/hysteria/dialer.go
+@@ -92,7 +92,10 @@ func (c *client) dial(ctx context.Context) error {
+ 		DisablePathMTUDiscovery:        quicParams.DisablePathMtuDiscovery || (runtime.GOOS != "linux" && runtime.GOOS != "windows" && runtime.GOOS != "darwin"),
+ 		EnableDatagrams:                true,
+ 		MaxDatagramFrameSize:           MaxDatagramFrameSize,
+-		OmitMaxDatagramFrameSize:       time.Now().After(time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
++		// MegaV fork: upstream flips this to true after 2026-09-01, silently
++		// changing the QUIC datagram frame behaviour for hysteria. Pin to the
++		// pre-deadline value so behaviour never changes under us on a date.
++		OmitMaxDatagramFrameSize:       false,
+ 		DisablePathManager:             true,
+ 	}
+ 	if quicParams.InitStreamReceiveWindow == 0 {

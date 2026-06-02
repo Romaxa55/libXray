@@ -48,16 +48,39 @@ class Builder(object):
         if ret.returncode != 0:
             raise Exception("go get xray-core pinned commit failed")
 
-        # 2026-05-20: replace на ЛОКАЛЬНЫЙ форк xray-core с PR #5805.
-        # Папка `../xray-core` относительно `libXray/` — клонируется вручную (см. .gitignore).
-        # Содержит upstream-commit ad68fd33 + applied patch
-        # `libXray/patches/0001-pr-5805-dialer-proxy-balancer.patch` (PR #5805 — резолв
-        # balancer-tag в sockopt.dialerProxy для chain-mode VPN, см. _lab/README.md).
+        # 2026-05-20: replace на ЛОКАЛЬНЫЙ форк xray-core.
+        # Папка `../xray-core` относительно `libXray/` — это ПОСТОЯННЫЙ git-форк
+        # (branch feature/dialer-proxy-balancer), клонируется вручную (см. .gitignore).
+        # Все наши доработки лежат КОММИТАМИ в дереве форка, а не накатываются
+        # патчами при сборке:
+        #   - PR #5805 (резолв balancer-tag в sockopt.dialerProxy, chain-mode VPN)
+        #   - dialerProxyFallbackTag, route-notification hook, memory-fix
+        #   - 2026-06-02 b879ebd1: degrade allowInsecure date-fatal → warning,
+        #     hysteria OmitMaxDatagramFrameSize pin, browser.go uTLS re-anchor.
+        # Сборка НЕ делает `go get` на upstream и НЕ ресетит дерево форка — оно
+        # стабильно между сборками. patches/*.patch оставлены как backup-diff
+        # для восстановления, если форк когда-нибудь снесут и зальют заново.
         ret = subprocess.run(
             ["go", "mod", "edit", "-replace=github.com/xtls/xray-core=../xray-core"]
         )
         if ret.returncode != 0:
             raise Exception("go mod edit -replace ../xray-core failed")
+
+        # 2026-06-02: time-bomb sanity-guard. Degrade уже в дереве форка (b879ebd1),
+        # так что в норме эта проверка просто проходит. Она ловит РЕГРЕСС — если
+        # кто-то случайно сбросит ../xray-core на чистый upstream (ручной `go get`
+        # или git reset), date-gated фатал на allowInsecure вернётся и тихо
+        # положит каждого выпущенного клиента (xray stopped, SOCKS refused,
+        # "сайты не открываются"). Лучше упасть на сборке, чем выпустить такой
+        # libv2ray. Восстановление: вернуть форк на feature/dialer-proxy-balancer
+        # или, в крайнем случае, накатить patches/0002-defuse-date-timebombs.patch.
+        guard = os.path.join(self.lib_dir, "scripts", "check-no-timebomb.sh")
+        ret = subprocess.run(["bash", guard])
+        if ret.returncode != 0:
+            raise Exception(
+                "time-bomb guard failed: date-gated fatal/flip returned in "
+                "../xray-core — re-apply patches/0002-defuse-date-timebombs.patch"
+            )
 
         ret = subprocess.run(
             [
