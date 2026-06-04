@@ -20,8 +20,17 @@
 """
 
 import os
+import shutil
+import subprocess
 
 from app.apple_deploy import _replace_file
+
+# ★ Android CI качает libv2ray.aar НЕ из репо, а из этого GitHub Release
+# (см. .github/workflows/build-android.yml «Download libv2ray.aar from Release»).
+# Поэтому каждая пересборка ОБЯЗАНА синхронизировать сюда — иначе CI соберёт
+# со старой нативкой. Инцидент 2026-06-04: рассинхрон → release не стартует xray.
+_AAR_RELEASE_TAG = "windows-deps"
+_AAR_RELEASE_REPO = "Romaxa55/MegaV_Public"
 
 
 _DEPLOY_TARGETS = {
@@ -53,4 +62,42 @@ def deploy_android_aar(libxray_dir: str):
             dst = os.path.join(megav_root, rel)
             _replace_file(src, dst)
 
+    _upload_aar_to_release(megav_root)
     print("[android-deploy] OK")
+
+
+def _upload_aar_to_release(megav_root: str):
+    """★ Авто-синхронизация libv2ray.aar с GitHub Release windows-deps.
+
+    КРИТИЧНО (инцидент 2026-06-04): Android CI качает aar из Release, НЕ из
+    репо. Без этой синхронизации CI собирает со СТАРОЙ нативкой → release-сборка
+    не поднимает xray (debug/локально работает на репо-aar, прод — мёртв).
+    Эта функция делает «при сборке либы — пушим в Release» автоматически.
+
+    Best-effort: если gh нет/не авторизован — ГРОМКИЙ warning, но НЕ падаем
+    (локальная сборка не должна ломаться из-за отсутствия gh-токена; зато
+    разработчик увидит, что Release остался старым и CI соберёт битьё).
+    """
+    aar = os.path.join(megav_root, "v2ray_flutter/android/libs/libv2ray.aar")
+    if not os.path.isfile(aar):
+        print("[android-deploy] upload skip — aar отсутствует")
+        return
+    if shutil.which("gh") is None:
+        print("[android-deploy] ⚠️⚠️ gh CLI не найден — Release "
+              f"{_AAR_RELEASE_TAG} НЕ ОБНОВЛЁН! CI соберёт со СТАРЫМ aar.\n"
+              f"    Залей вручную: gh release upload {_AAR_RELEASE_TAG} "
+              f"{aar} -R {_AAR_RELEASE_REPO} --clobber")
+        return
+    print(f"[android-deploy] uploading libv2ray.aar → Release "
+          f"{_AAR_RELEASE_TAG} ({_AAR_RELEASE_REPO})...")
+    try:
+        subprocess.run(
+            ["gh", "release", "upload", _AAR_RELEASE_TAG, aar,
+             "-R", _AAR_RELEASE_REPO, "--clobber"],
+            check=True,
+        )
+        print("[android-deploy] ✅ Release синхронизирован — CI возьмёт свежий aar")
+    except subprocess.CalledProcessError as exc:
+        print(f"[android-deploy] ⚠️⚠️ gh release upload FAILED ({exc}) — Release "
+              f"{_AAR_RELEASE_TAG} НЕ ОБНОВЛЁН! CI соберёт со СТАРЫМ aar. "
+              "Залей вручную.")
