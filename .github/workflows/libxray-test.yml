@@ -10,14 +10,29 @@ jobs:
     permissions:
       contents: read
     steps:
+      # go.mod replaces xray-core with ../xray-core: the fork with the dialer-proxy
+      # balancer and the defused date checks. Both repositories sit side by side.
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          path: libXray
+
+      - name: Checkout the xray-core fork
+        uses: actions/checkout@v6
+        with:
+          repository: Romaxa55/Xray-core
+          ref: feature/dialer-proxy-balancer
+          path: xray-core
 
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
-          cache-dependency-path: go.sum
+          go-version-file: libXray/go.mod
+          cache-dependency-path: libXray/go.sum
+
+      - name: No date-gated failures in the fork
+        run: libXray/scripts/check-no-timebomb.sh xray-core
 
       - name: Go test
+        working-directory: libXray
         run: go test ./... -count=1 -timeout 15m
