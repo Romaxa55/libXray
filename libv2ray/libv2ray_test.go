@@ -76,6 +76,17 @@ func stats(t *testing.T) memoryStats {
 }
 
 func TestMemoryStatsReportTheRuntime(t *testing.T) {
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(GetMemoryStats()), &fields); err != nil {
+		t.Fatalf("GetMemoryStats: %v", err)
+	}
+	for _, key := range []string{
+		"running", "goroutines", "heap_inuse", "heap_idle", "heap_released", "sys", "num_gc",
+	} {
+		if _, ok := fields[key]; !ok {
+			t.Errorf("no %q in %v", key, fields)
+		}
+	}
 	s := stats(t)
 	if s.Running {
 		t.Fatal("running before any start")
@@ -87,6 +98,7 @@ func TestMemoryStatsReportTheRuntime(t *testing.T) {
 
 func TestStartWithDatDirReadsGeodata(t *testing.T) {
 	dir := datDir(t)
+	t.Cleanup(func() { StopV2Ray() })
 	if got := StartV2RayWithConfigAndDatDir(config(t, true), dir); got != "SUCCESS" {
 		t.Fatalf("start with %s: %s", dir, got)
 	}
@@ -98,7 +110,6 @@ func TestStartWithDatDirReadsGeodata(t *testing.T) {
 	}
 	got := StartV2RayWithConfigAndDatDir(config(t, true), t.TempDir())
 	if got == "SUCCESS" {
-		StopV2Ray()
 		t.Fatal("started without geosite.dat")
 	}
 	if !strings.Contains(got, "geosite.dat") {
@@ -107,12 +118,13 @@ func TestStartWithDatDirReadsGeodata(t *testing.T) {
 }
 
 func TestStartStopCyclesLeaveNoGoroutines(t *testing.T) {
+	t.Cleanup(func() { StopV2Ray() })
 	// One cycle first: the core's lazily started workers stay for the process.
 	if got := StartV2RayWithConfig(config(t, false)); got != "SUCCESS" {
 		t.Fatalf("start: %s", got)
 	}
 	StopV2Ray()
-	before := settled(stats(t).Goroutines)
+	before := quietGoroutines()
 	for i := 0; i < 23; i++ {
 		if got := StartV2RayWithConfig(config(t, false)); got != "SUCCESS" {
 			t.Fatalf("start %d: %s", i+1, got)
@@ -121,14 +133,30 @@ func TestStartStopCyclesLeaveNoGoroutines(t *testing.T) {
 			t.Fatalf("stop %d: %s", i+1, got)
 		}
 	}
-	if after := settled(before); after > before {
+	if after := goroutinesDownTo(before); after > before {
 		t.Fatalf("23 start/stop cycles: %d goroutines, %d before", after, before)
 	}
 }
 
-// settled is the goroutine count once it stops falling below want, or after
-// two seconds.
-func settled(want int) int {
+// quietGoroutines is the goroutine count once it holds for 100 ms (at most
+// two seconds of waiting): goroutines of a stopped core may still be ending.
+func quietGoroutines() int {
+	deadline := time.Now().Add(2 * time.Second)
+	n := runtime.NumGoroutine()
+	for time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+		m := runtime.NumGoroutine()
+		if m == n {
+			return n
+		}
+		n = m
+	}
+	return n
+}
+
+// goroutinesDownTo waits up to two seconds for the goroutine count to come
+// down to want and returns the last count.
+func goroutinesDownTo(want int) int {
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		n := runtime.NumGoroutine()

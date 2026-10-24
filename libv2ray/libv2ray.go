@@ -49,8 +49,8 @@ func StartV2RayWithConfig(configJSON string) string {
 
 // StartV2RayWithConfigAndDatDir is StartV2RayWithConfig for a config whose
 // rules read geodata: Xray takes geosite.dat and geoip.dat from datDir
-// instead of looking for them next to the process. Returns "SUCCESS" or
-// "FAILED: ...".
+// instead of the process's working directory, so an app need not change it.
+// Returns "SUCCESS" or "FAILED: ...".
 func StartV2RayWithConfigAndDatDir(configJSON string, datDir string) string {
 	req := libxray.RunXrayFromJSONRequest{
 		DatDir:       datDir,
