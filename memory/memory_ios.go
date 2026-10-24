@@ -14,18 +14,11 @@ const (
 	maxMemory = 30 * 1024 * 1024
 )
 
-func forceFree(interval time.Duration) {
-	go func() {
-		for {
-			time.Sleep(interval)
-			debug.FreeOSMemory()
-		}
-	}()
-}
-
+// InitForceFree tunes the GC for the Network Extension's memory cap and starts
+// the FreeOSMemory ticker; called on every core start, it keeps one ticker per
+// running core (StopForceFree ends it on stop).
 func InitForceFree() {
 	debug.SetGCPercent(10)
 	debug.SetMemoryLimit(maxMemory)
-	duration := time.Duration(interval) * time.Second
-	forceFree(duration)
+	startTicker(time.Duration(interval) * time.Second)
 }
