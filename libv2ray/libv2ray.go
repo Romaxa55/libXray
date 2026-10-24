@@ -43,8 +43,17 @@ func InitializeV2Ray() string {
 // StartV2RayWithConfig — упаковывает JSON в base64-request формат
 // и вызывает новый RunXrayFromJSON. Возвращает "SUCCESS" или "FAILED: ..."
 func StartV2RayWithConfig(configJSON string) string {
+	// GeoIP не используем — наш конфиг без geoip:/geosite: rules
+	return StartV2RayWithConfigAndDatDir(configJSON, "")
+}
+
+// StartV2RayWithConfigAndDatDir is StartV2RayWithConfig for a config whose
+// rules read geodata: Xray takes geosite.dat and geoip.dat from datDir
+// instead of looking for them next to the process. Returns "SUCCESS" or
+// "FAILED: ...".
+func StartV2RayWithConfigAndDatDir(configJSON string, datDir string) string {
 	req := libxray.RunXrayFromJSONRequest{
-		DatDir:       "", // GeoIP не используем — наш конфиг без geoip:/geosite: rules
+		DatDir:       datDir,
 		MphCachePath: "",
 		ConfigJSON:   configJSON,
 	}
@@ -221,12 +230,37 @@ func ForceGC() string {
 	return "SUCCESS"
 }
 
-// GetMemoryStats — старый custom helper для diagnostics.
+// memoryStats is what GetMemoryStats reports.
+type memoryStats struct {
+	Running      bool   `json:"running"`
+	Goroutines   int    `json:"goroutines"`
+	HeapInuse    uint64 `json:"heap_inuse"`
+	HeapIdle     uint64 `json:"heap_idle"`
+	HeapReleased uint64 `json:"heap_released"`
+	Sys          uint64 `json:"sys"`
+	NumGC        uint32 `json:"num_gc"`
+}
+
+// GetMemoryStats — the Go runtime's numbers for diagnostics, as JSON:
+// whether the core runs, live goroutines, heap bytes in use, idle and given
+// back to the OS, all bytes the runtime got from the OS, completed GC cycles.
+// Reading them stops the world for a moment: not for a hot path.
 func GetMemoryStats() string {
-	if libxray.GetXrayState() {
-		return `{"compat":"stub","running":true}`
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	out, err := json.Marshal(memoryStats{
+		Running:      libxray.GetXrayState(),
+		Goroutines:   runtime.NumGoroutine(),
+		HeapInuse:    m.HeapInuse,
+		HeapIdle:     m.HeapIdle,
+		HeapReleased: m.HeapReleased,
+		Sys:          m.Sys,
+		NumGC:        m.NumGC,
+	})
+	if err != nil {
+		return "FAILED: " + err.Error()
 	}
-	return `{"compat":"stub","running":false}`
+	return string(out)
 }
 
 // ConvertUrlToConfig — нативный xray-парсер URL → JSON xray-config.
