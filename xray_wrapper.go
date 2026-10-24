@@ -225,6 +225,22 @@ func GetObservatoryState(requestJSON string) string {
 	return xray.GetObservatoryState(requestJSON)
 }
 
+// OverrideBalancer — root wrapper: pins a balancer of the running core to one
+// outbound for new connections; an empty target lifts the pin.
+//
+// Returns JSON-строку: см. xray/balancer_override.go::BalancerOverrideResponse.
+func OverrideBalancer(balancer, target string) string {
+	return xray.OverrideBalancer(balancer, target)
+}
+
+// ObservatoryCheck — root wrapper: one burstObservatory round now, over its
+// subjectSelector; blocks until every probe answered or timed out.
+//
+// Returns JSON-строку: см. xray/observatory_state.go::ObservatoryStateResponse.
+func ObservatoryCheck() string {
+	return xray.ObservatoryCheck()
+}
+
 // GetBuildInfo — sanity-check метаданных билда. Используется Dart-стороной
 // чтобы понять какая версия libv2ray.a/.aar/.xcframework сейчас подключена
 // (поддерживает ли chain-mode PR #5805, observatory_state API и т.д.).

@@ -189,6 +189,36 @@ func GetObservatoryState(requestJSON *C.char) *C.char {
 	return C.CString(libxray.GetObservatoryState(req))
 }
 
+// OverrideBalancer — закрепляет балансировщик работающего ядра за одним
+// outbound: новые соединения балансировщика идут через target, открытые
+// остаются где были; пустой target снимает закрепление. Живость закреплённого
+// ядро не проверяет и fallbackTag к нему не применяет.
+//
+// Returns C-string JSON. Caller MUST free через Free(ptr).
+//
+//   let raw = OverrideBalancer(strdup("exits"), strdup("exit-1"))
+//   // {"balancer":"exits","target":"exit-1"} или с "error"
+//
+// См. libv2ray/libv2ray.go::OverrideBalancer — документация полная.
+//
+//export OverrideBalancer
+func OverrideBalancer(balancer *C.char, target *C.char) *C.char {
+	return C.CString(libxray.OverrideBalancer(C.GoString(balancer), C.GoString(target)))
+}
+
+// ObservatoryCheck — внеочередной раунд проб burstObservatory по его
+// subjectSelector; ответ — снимок как у GetObservatoryState после раунда.
+// Блокирует до pingConfig.timeout — звать не с главного потока.
+//
+// Returns C-string JSON. Caller MUST free через Free(ptr).
+//
+// См. libv2ray/libv2ray.go::ObservatoryCheck — документация полная.
+//
+//export ObservatoryCheck
+func ObservatoryCheck() *C.char {
+	return C.CString(libxray.ObservatoryCheck())
+}
+
 // GetBuildInfo — метаданные собранной libv2ray.a (cgo wrapper):
 // xray_version, go_version, features (PR #5805, observatory_state, etc.).
 //

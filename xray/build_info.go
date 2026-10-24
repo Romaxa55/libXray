@@ -56,6 +56,8 @@ func GetBuildInfo() string {
 			"pr5805_balancer_dialer":      detectPR5805(),
 			"observatory_state":           true, // наш own API (см. observatory_state.go)
 			"probe_outbound":              true, // honest HTTP-probe (см. probe_outbound.go)
+			"balancer_override":           true, // закрепление балансировщика (см. balancer_override.go)
+			"observatory_check":           true, // внеочередной раунд burstObservatory (см. observatory_check.go)
 			"dialer_proxy_fallback_tag":   detectDialerProxyFallbackTag(),
 		},
 	}

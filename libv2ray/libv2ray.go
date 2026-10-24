@@ -197,6 +197,36 @@ func GetObservatoryState(requestJSON string) string {
 	return libxray.GetObservatoryState(requestJSON)
 }
 
+// OverrideBalancer pins the balancer tagged balancer to the outbound tagged
+// target: every new connection it routes goes through target, connections
+// already open stay where they are. An empty target lifts the pin, and the
+// balancer's strategy picks again.
+//
+// Xray takes a pinned outbound even when it is dead, and the balancer's
+// fallbackTag does not apply to it: lift the pin once GetObservatoryState or
+// ObservatoryCheck reads it alive=false.
+//
+// Returns JSON: {balancer, target, error?}; error is set when the core is not
+// running, there is no such balancer, or no such outbound.
+//
+// Details: xray/balancer_override.go.
+func OverrideBalancer(balancer, target string) string {
+	return libxray.OverrideBalancer(balancer, target)
+}
+
+// ObservatoryCheck runs one burstObservatory round now, over the outbounds
+// its subjectSelector picks, and returns the GetObservatoryState JSON once
+// every probe answered or ran out of pingConfig.timeout. An outbound that
+// stopped answering reads alive=false within that timeout, and leastPing
+// passes it by from then on.
+//
+// Blocks for up to pingConfig.timeout: call it off the main thread.
+//
+// Details: xray/observatory_check.go.
+func ObservatoryCheck() string {
+	return libxray.ObservatoryCheck()
+}
+
 // GetBuildInfo — JSON с метаданными собранной libv2ray (gomobile wrapper):
 // xray_version, go_version, libxray_commit (если VCS-stamping есть),
 // features (карта feature-flags). Главный флаг — pr5805_balancer_dialer.
