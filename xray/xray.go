@@ -74,6 +74,7 @@ func InitEnv(datDir string, mphCachePath string) {
 func RunXray(datDir string, mphCachePath string, configPath string) (err error) {
 	InitEnv(datDir, mphCachePath)
 	memory.InitForceFree()
+	defer stopForceFreeOnError(&err)
 	coreServer, err = StartXray(configPath)
 	if err != nil {
 		return
@@ -95,6 +96,7 @@ func RunXray(datDir string, mphCachePath string, configPath string) (err error) 
 func RunXrayFromJSON(datDir string, mphCachePath string, configJSON string) (err error) {
 	InitEnv(datDir, mphCachePath)
 	memory.InitForceFree()
+	defer stopForceFreeOnError(&err)
 	coreServer, err = StartXrayFromJSON(configJSON)
 	if err != nil {
 		return
@@ -103,6 +105,14 @@ func RunXrayFromJSON(datDir string, mphCachePath string, configJSON string) (err
 	syncCoreServerPtr() // 2026-05-18: thread-safe snapshot для ProbeOutbound
 	debug.FreeOSMemory()
 	return nil
+}
+
+// stopForceFreeOnError ends the FreeOSMemory ticker of a start that failed:
+// no core runs, so no ticker either.
+func stopForceFreeOnError(err *error) {
+	if *err != nil {
+		memory.StopForceFree()
+	}
 }
 
 // Get Xray State
@@ -116,6 +126,7 @@ func StopXray() error {
 		err := coreServer.Close()
 		coreServer = nil
 		syncCoreServerPtr() // 2026-05-18: thread-safe snapshot для ProbeOutbound
+		memory.StopForceFree()
 
 		// 2026-05-22 (юзер, golang-pro audit): после coreServer.Close()
 		// Go куча освобождает весь xray heap (~10-20 MB), но не возвращает
