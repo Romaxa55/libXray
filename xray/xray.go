@@ -85,6 +85,8 @@ func RunXray(datDir string, mphCachePath string, configPath string) (err error) 
 	}
 
 	syncCoreServerPtr() // 2026-05-18: thread-safe snapshot для ProbeOutbound
+	configJSON, _ := os.ReadFile(configPath)
+	rememberObserved(coreServer, string(configJSON))
 	debug.FreeOSMemory()
 	return nil
 }
@@ -103,6 +105,7 @@ func RunXrayFromJSON(datDir string, mphCachePath string, configJSON string) (err
 	}
 
 	syncCoreServerPtr() // 2026-05-18: thread-safe snapshot для ProbeOutbound
+	rememberObserved(coreServer, configJSON)
 	debug.FreeOSMemory()
 	return nil
 }
@@ -126,6 +129,7 @@ func StopXray() error {
 		err := coreServer.Close()
 		coreServer = nil
 		syncCoreServerPtr() // 2026-05-18: thread-safe snapshot для ProbeOutbound
+		forgetObserved()
 		memory.StopForceFree()
 
 		// 2026-05-22 (юзер, golang-pro audit): после coreServer.Close()
