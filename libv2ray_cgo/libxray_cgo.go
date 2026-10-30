@@ -219,6 +219,19 @@ func ObservatoryCheck() *C.char {
 	return C.CString(libxray.ObservatoryCheck())
 }
 
+// GetOutboundStats — байты вверх и вниз каждого outbound работающего ядра с
+// его старта, прочитанные внутри экземпляра; нужны "stats": {} и
+// policy.system.statsOutbound* в конфиге.
+//
+// Returns C-string JSON. Caller MUST free через Free(ptr).
+//
+// См. libv2ray/libv2ray.go::GetOutboundStats — документация полная.
+//
+//export GetOutboundStats
+func GetOutboundStats() *C.char {
+	return C.CString(libxray.GetOutboundStats())
+}
+
 // GetBuildInfo — метаданные собранной libv2ray.a (cgo wrapper):
 // xray_version, go_version, features (PR #5805, observatory_state, etc.).
 //
