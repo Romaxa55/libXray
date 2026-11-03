@@ -1,0 +1,212 @@
+name: Build cores
+
+# MegaV core artifacts for every app platform except iOS, built against the
+# xray-core fork commit in xray-core.ref (scripts/build-core.sh does the work).
+# A CalVer tag vYY.M.D publishes them as a release of that tag; the same tag
+# gets its Go-module mirror v1.YYMMDD.N from release-go-mirror.yml, so the
+# checker and the apps can pin one version. PRs and manual runs only build.
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/build-cores.yml'
+      - 'scripts/build-core.sh'
+      - 'scripts/check-no-timebomb.sh'
+      - 'xray-core.ref'
+      - 'go.mod'
+      - 'go.sum'
+      - '**.go'
+      - 'build/template/**'
+  push:
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-cores-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  meta:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      xray_ref: ${{ steps.v.outputs.xray_ref }}
+      release: ${{ steps.v.outputs.release }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: v
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          xray_ref="$(tr -d '[:space:]' < xray-core.ref)"
+          [[ "$xray_ref" =~ ^[0-9a-f]{40}$ ]] || { echo "xray-core.ref is not a full SHA: $xray_ref"; exit 1; }
+          release=false
+          tag=""
+          lib_ver="$(git rev-parse --short=7 HEAD)"
+          if [ "$EVENT" = "push" ] && [ "$REF_TYPE" = "tag" ]; then
+            # Same CalVer rule as release-go-mirror.yml: v1.* mirrors and
+            # legacy semver tags do not publish cores.
+            IFS=. read -r Y M D <<<"${REF_NAME#v}"
+            if [[ "$Y" =~ ^[0-9]+$ && "$M" =~ ^[0-9]+$ && "$D" =~ ^[0-9]+$ ]] \
+              && [ "$Y" -ge 20 ] && [ "$M" -ge 1 ] && [ "$M" -le 12 ] && [ "$D" -ge 1 ] && [ "$D" -le 31 ]; then
+              release=true
+              tag="$REF_NAME"
+              lib_ver="$REF_NAME"
+            else
+              echo "tag $REF_NAME is not CalVer vYY.M.D: build only, no release"
+            fi
+          fi
+          version="${lib_ver}-xray-${xray_ref:0:7}"
+          {
+            echo "version=$version"
+            echo "xray_ref=$xray_ref"
+            echo "release=$release"
+            echo "tag=$tag"
+          } >> "$GITHUB_OUTPUT"
+          echo "version=$version release=$release"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: meta
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: android
+            os: ubuntu-24.04
+          # 22.04 keeps the glibc floor at 2.35 for the Linux app.
+          - target: linux-amd64
+            os: ubuntu-22.04
+          - target: linux-arm64
+            os: ubuntu-22.04-arm
+          - target: windows-amd64
+            os: ubuntu-24.04
+          - target: macos-universal
+            os: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          path: libXray
+
+      - name: Checkout the xray-core fork at xray-core.ref
+        uses: actions/checkout@v6
+        with:
+          repository: Romaxa55/Xray-core
+          ref: ${{ needs.meta.outputs.xray_ref }}
+          path: xray-core
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: libXray/go.mod
+          cache-dependency-path: libXray/go.sum
+
+      - name: Install mingw-w64
+        if: matrix.target == 'windows-amd64'
+        run: sudo apt-get update -q && sudo apt-get install -y -q gcc-mingw-w64-x86-64
+
+      - name: Build
+        env:
+          CORE_VERSION: ${{ needs.meta.outputs.version }}
+          XRAY_CORE_DIR: ${{ github.workspace }}/xray-core
+        run: libXray/scripts/build-core.sh "${{ matrix.target }}" dist
+
+      - name: Build info
+        env:
+          TARGET: ${{ matrix.target }}
+          RUNNER_IMAGE: ${{ matrix.os }}
+        run: |
+          set -euo pipefail
+          f="dist/buildinfo-$TARGET.json"
+          jq --arg runner "$RUNNER_IMAGE" '. + {runner: $runner}' "$f" > "$f.tmp"
+          mv "$f.tmp" "$f"
+          cat "$f"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  checksums:
+    name: Checksums
+    needs: [meta, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download
+        uses: actions/download-artifact@v5
+        with:
+          pattern: core-*
+          merge-multiple: true
+          path: dist
+
+      - name: versions.json and SHA256SUMS
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          XRAY_REF: ${{ needs.meta.outputs.xray_ref }}
+        run: |
+          set -euo pipefail
+          gomobile="$(awk '$1 == "golang.org/x/mobile" {print $2}' go.mod)"
+          jq -s --arg version "$VERSION" --arg libxray "$(git rev-parse HEAD)" \
+            --arg xray "$XRAY_REF" --arg gomobile "$gomobile" \
+            '{version: $version, libxray_commit: $libxray, xray_core_commit: $xray, gomobile: $gomobile, builds: .}' \
+            dist/buildinfo-*.json > dist/versions.json
+          rm -f dist/buildinfo-*.json
+          (cd dist && sha256sum -- * > SHA256SUMS)
+          cat dist/versions.json
+          cat dist/SHA256SUMS
+
+      - name: Upload the set
+        uses: actions/upload-artifact@v4
+        with:
+          name: cores-${{ needs.meta.outputs.version }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Release
+    needs: [meta, checksums]
+    if: needs.meta.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download the set
+        uses: actions/download-artifact@v5
+        with:
+          name: cores-${{ needs.meta.outputs.version }}
+          path: dist
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.meta.outputs.tag }}
+          VERSION: ${{ needs.meta.outputs.version }}
+          XRAY_REF: ${{ needs.meta.outputs.xray_ref }}
+        run: |
+          set -euo pipefail
+          # One release per version: an existing release is never overwritten.
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "MegaV cores $VERSION" \
+            --notes "libXray $TAG ($(git rev-parse --short=7 HEAD)), xray-core Romaxa55/Xray-core@${XRAY_REF:0:7}. Android, Linux, Windows, macOS; no iOS. Checksums in SHA256SUMS, build details in versions.json."
