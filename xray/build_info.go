@@ -37,21 +37,40 @@ type BuildInfo struct {
 
 	// vcs.revision коммит libXray (из runtime/debug.ReadBuildInfo) — если
 	// был VCS-stamping при сборке. На gomobile-bind часто пустой,
-	// на cgo заполнен.
+	// на cgo заполнен. Без него — коммит, вшитый scripts/build-core.sh.
 	LibxrayCommit string `json:"libxray_commit,omitempty"`
+
+	// Версия сборки ядра из scripts/build-core.sh, например
+	// "v26.11.4-xray-59949ab" (тег libXray + коммит форка xray-core). Та же
+	// строка стоит в именах артефактов релиза; пусто у ручных сборок.
+	CoreVersion string `json:"core_version,omitempty"`
+
+	// Полный коммит форка xray-core (xray-core.ref): core.Version() коммиты
+	// форка не различает.
+	XrayCoreCommit string `json:"xray_core_commit,omitempty"`
 
 	// Карта фич: {имя_фичи: доступна_true_false}.
 	// pr5805_balancer_dialer — главная для chain-mode.
 	Features map[string]bool `json:"features"`
 }
 
+// Заполняются при сборке: scripts/build-core.sh передаёт
+// -ldflags "-X github.com/xtls/libxray/xray.coreVersion=…" и т.д.
+var (
+	coreVersion    string
+	xrayCoreCommit string
+	libxrayCommit  string
+)
+
 // GetBuildInfo возвращает JSON-строку с метаданными билда.
 // Безопасно вызывать в любой момент — не трогает xray-instance,
 // просто читает compile-time / runtime инфо.
 func GetBuildInfo() string {
 	info := BuildInfo{
-		XrayVersion: core.Version(),
-		GoVersion:   runtime.Version(),
+		XrayVersion:    core.Version(),
+		GoVersion:      runtime.Version(),
+		CoreVersion:    coreVersion,
+		XrayCoreCommit: xrayCoreCommit,
 		Features: map[string]bool{
 			"pr5805_balancer_dialer":      detectPR5805(),
 			"observatory_state":           true, // наш own API (см. observatory_state.go)
@@ -70,6 +89,9 @@ func GetBuildInfo() string {
 				break
 			}
 		}
+	}
+	if info.LibxrayCommit == "" {
+		info.LibxrayCommit = libxrayCommit
 	}
 
 	b, err := json.Marshal(info)

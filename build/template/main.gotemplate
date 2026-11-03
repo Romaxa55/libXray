@@ -89,6 +89,14 @@ func CGoXrayVersion() *C.char {
 	return C.CString(XrayVersion())
 }
 
+// CGoGetBuildInfo — JSON GetBuildInfo (core_version, xray_core_commit, фичи)
+// для Linux .so; Android/Windows/macOS отдают его через свои обёртки.
+//
+//export CGoGetBuildInfo
+func CGoGetBuildInfo() *C.char {
+	return C.CString(GetBuildInfo())
+}
+
 //export CGoBuildMphCache
 func CGoBuildMphCache(base64Text *C.char) *C.char {
 	text := C.GoString(base64Text)
