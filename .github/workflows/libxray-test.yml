@@ -11,17 +11,25 @@ jobs:
       contents: read
     steps:
       # go.mod replaces xray-core with ../xray-core: the fork with the dialer-proxy
-      # balancer and the defused date checks. Both repositories sit side by side.
+      # balancer and the defused date checks, at the commit in xray-core.ref (the
+      # same one build-cores.yml builds). Both repositories sit side by side.
       - name: Checkout
         uses: actions/checkout@v6
         with:
           path: libXray
 
+      - name: Read xray-core.ref
+        id: xray
+        run: |
+          ref="$(tr -d '[:space:]' < libXray/xray-core.ref)"
+          [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || { echo "xray-core.ref is not a full SHA: $ref"; exit 1; }
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
       - name: Checkout the xray-core fork
         uses: actions/checkout@v6
         with:
           repository: Romaxa55/Xray-core
-          ref: feature/dialer-proxy-balancer
+          ref: ${{ steps.xray.outputs.ref }}
           path: xray-core
 
       - name: Set up Go
