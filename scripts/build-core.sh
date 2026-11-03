@@ -45,9 +45,11 @@ fi
 "$LIBXRAY_DIR/scripts/check-no-timebomb.sh" "$XRAY_CORE_DIR"
 
 if [ -z "${CORE_VERSION:-}" ]; then
-  lib_ver="$(git -C "$LIBXRAY_DIR" describe --tags --exact-match 2>/dev/null || git -C "$LIBXRAY_DIR" rev-parse --short=7 HEAD)"
+  # CalVer tag as in release names, not its Go mirror v1.YYMMDD.N.
+  lib_ver="$(git -C "$LIBXRAY_DIR" describe --tags --exact-match --exclude 'v1.*' 2>/dev/null || git -C "$LIBXRAY_DIR" rev-parse --short=7 HEAD)"
   CORE_VERSION="${lib_ver}-xray-${have_ref:0:7}"
 fi
+[[ "$CORE_VERSION" =~ ^[A-Za-z0-9._+-]+$ ]] || { echo "[build-core] bad CORE_VERSION: $CORE_VERSION" >&2; exit 2; }
 NAME_SUFFIX="${CORE_VERSION}-${TARGET}"
 
 # Build in a throwaway copy of the module: the root package is renamed to main
@@ -62,7 +64,10 @@ cd "$SRC"
 go mod edit -replace="github.com/xtls/xray-core=$XRAY_CORE_DIR"
 
 export CGO_ENABLED=1
-GO_LDFLAGS="-s -w"
+# Versions for GetBuildInfo (xray/build_info.go): core_version, xray_core_commit, libxray_commit.
+lib_commit="$(git -C "$LIBXRAY_DIR" rev-parse HEAD)"
+VERSION_LDFLAGS="-X github.com/xtls/libxray/xray.coreVersion=${CORE_VERSION} -X github.com/xtls/libxray/xray.xrayCoreCommit=${have_ref} -X github.com/xtls/libxray/xray.libxrayCommit=${lib_commit}"
+GO_LDFLAGS="-s -w ${VERSION_LDFLAGS}"
 NDK_VERSION=""
 
 prepare_root_main() {
@@ -99,7 +104,7 @@ case "$TARGET" in
     go install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
     PATH="$GOBIN:$PATH"
     (cd libv2ray && gomobile bind -target android -androidapi 21 -trimpath \
-      -ldflags=-extldflags=-Wl,-z,max-page-size=16384 -o "$WORK/libv2ray.aar" .)
+      -ldflags="${VERSION_LDFLAGS} -extldflags=-Wl,-z,max-page-size=16384" -o "$WORK/libv2ray.aar" .)
     cp "$WORK/libv2ray.aar" "$OUT_DIR/libv2ray-${NAME_SUFFIX}.aar"
     cp "$WORK/libv2ray-sources.jar" "$OUT_DIR/libv2ray-${NAME_SUFFIX}-sources.jar"
     ;;
