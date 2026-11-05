@@ -227,6 +227,25 @@ func ObservatoryCheck() string {
 	return libxray.ObservatoryCheck()
 }
 
+// GetTrafficStats returns the bytes every outbound of the running core
+// carried since it started:
+//
+//	{"outbound": {"<tag>": {"uplink": n, "downlink": n}}}
+//
+// A core counts from zero on every start. Outbounds have counters when the
+// config has "stats" and policy.system.statsOutboundUplink/Downlink; without
+// them the map is empty. The core not running:
+// {"outbound": {}, "error": "xray not running"}.
+//
+// Reads the counters in the process, without an API inbound or the metrics
+// listener, so it answers for every start: Xray's metrics are made once a
+// process, and a second core's are not there.
+//
+// Details: xray/traffic_stats.go.
+func GetTrafficStats() string {
+	return libxray.GetTrafficStats()
+}
+
 // GetBuildInfo — JSON с метаданными собранной libv2ray (gomobile wrapper):
 // xray_version, go_version, libxray_commit (если VCS-stamping есть),
 // features (карта feature-flags). Главный флаг — pr5805_balancer_dialer.
