@@ -219,6 +219,22 @@ func ObservatoryCheck() *C.char {
 	return C.CString(libxray.ObservatoryCheck())
 }
 
+// GetTrafficStats — байты каждого outbound работающего ядра по тегу с его
+// старта, из менеджера счётчиков в процессе: без metrics и API-inbound,
+// на каждом старте (metrics живут один раз на процесс).
+//
+// Returns C-string JSON. Caller MUST free через Free(ptr).
+//
+//   let raw = GetTrafficStats()
+//   // {"outbound":{"direct":{"uplink":1,"downlink":2}}} или с "error"
+//
+// См. libv2ray/libv2ray.go::GetTrafficStats — документация полная.
+//
+//export GetTrafficStats
+func GetTrafficStats() *C.char {
+	return C.CString(libxray.GetTrafficStats())
+}
+
 // GetBuildInfo — метаданные собранной libv2ray.a (cgo wrapper):
 // xray_version, go_version, features (PR #5805, observatory_state, etc.).
 //
