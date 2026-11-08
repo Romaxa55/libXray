@@ -209,4 +209,4 @@ jobs:
           # One release per version: an existing release is never overwritten.
           gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "MegaV cores $VERSION" \
-            --notes "libXray $TAG ($(git rev-parse --short=7 HEAD)), xray-core Romaxa55/Xray-core@${XRAY_REF:0:7}. Android, Linux, Windows, macOS; no iOS. Checksums in SHA256SUMS, build details in versions.json."
+            --notes "libXray $TAG ($(git rev-parse --short=7 HEAD)), xray-core Romaxa55/Xray-core@${XRAY_REF:0:7}. Android, Linux (libXray.so and the xray executable), Windows, macOS; no iOS. Checksums in SHA256SUMS, build details in versions.json."
