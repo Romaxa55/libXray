@@ -8,7 +8,9 @@
 # Targets (what each app loads today):
 #   android          libv2ray.aar + sources jar  gomobile bind ./libv2ray (compat shim)
 #   linux-amd64      libXray.so + .h             c-shared of the root package (CGo* API)
-#   linux-arm64      libXray.so + .h             same, arm64
+#                    xray                        xray's own CLI from the fork, static (the
+#                                                Linux app's daemon runs it as /usr/lib/megav/v2ray)
+#   linux-arm64      libXray.so + .h, xray       same, arm64
 #   windows-amd64    libv2ray.dll + .h           c-shared ./libv2ray_cgo, mingw cross
 #   macos-universal  libv2ray.a + .h             c-archive ./libv2ray_cgo, arm64+amd64 lipo
 # iOS (Libv2ray.xcframework) is not built here.
@@ -110,6 +112,16 @@ case "$TARGET" in
     ;;
   linux-amd64|linux-arm64)
     arch="${TARGET#linux-}"
+    # The Linux app does not load libXray.so: its daemon runs the core as an
+    # executable, `v2ray run -config <file>` (MegaV_checker#63). That is xray's
+    # own CLI from the same fork commit, with the flags of upstream's release.
+    # Built here, in this module, not in the fork's directory: the replace above
+    # gives it the dependency versions of libXray.so and the checker (the fork's
+    # own go.mod pins older x/crypto, x/net, x/sys and grpc).
+    CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -mod=readonly -trimpath -buildvcs=false \
+      -gcflags="all=-l=4" -ldflags "-X github.com/xtls/xray-core/core.build=${have_ref:0:7} -s -w -buildid=" \
+      -o "$WORK/xray" github.com/xtls/xray-core/main
+    cp "$WORK/xray" "$OUT_DIR/xray-${NAME_SUFFIX}"
     prepare_root_main
     GOOS=linux GOARCH="$arch" go build -trimpath -ldflags "$GO_LDFLAGS" -buildmode=c-shared \
       -o "$WORK/libXray.so" .
