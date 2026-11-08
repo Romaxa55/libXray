@@ -114,10 +114,13 @@ case "$TARGET" in
     arch="${TARGET#linux-}"
     # The Linux app does not load libXray.so: its daemon runs the core as an
     # executable, `v2ray run -config <file>` (MegaV_checker#63). That is xray's
-    # own CLI, built from the same fork commit with the flags of upstream's release.
-    (cd "$XRAY_CORE_DIR" && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -buildvcs=false \
+    # own CLI from the same fork commit, with the flags of upstream's release.
+    # Built here, in this module, not in the fork's directory: the replace above
+    # gives it the dependency versions of libXray.so and the checker (the fork's
+    # own go.mod pins older x/crypto, x/net, x/sys and grpc).
+    CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -mod=readonly -trimpath -buildvcs=false \
       -gcflags="all=-l=4" -ldflags "-X github.com/xtls/xray-core/core.build=${have_ref:0:7} -s -w -buildid=" \
-      -o "$WORK/xray" ./main)
+      -o "$WORK/xray" github.com/xtls/xray-core/main
     cp "$WORK/xray" "$OUT_DIR/xray-${NAME_SUFFIX}"
     prepare_root_main
     GOOS=linux GOARCH="$arch" go build -trimpath -ldflags "$GO_LDFLAGS" -buildmode=c-shared \
