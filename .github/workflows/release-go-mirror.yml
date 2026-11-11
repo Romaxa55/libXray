@@ -25,7 +25,7 @@ on:
 jobs:
   mirror:
     name: Mirror CalVer tag to v1.YYMMDD.N
-    runs-on: ubuntu-latest
+    runs-on: libxray  # our runner, see build-cores.yml
     permissions:
       contents: write
     steps:

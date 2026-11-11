@@ -5,6 +5,12 @@ name: Build cores
 # A CalVer tag vYY.M.D publishes them as a release of that tag; the same tag
 # gets its Go-module mirror v1.YYMMDD.N from release-go-mirror.yml, so the
 # checker and the apps can pin one version. PRs and manual runs only build.
+#
+# Runners are our own (the owner's decision 2026-11-11: GitHub-hosted minutes
+# only as a last resort): label libxray is a pod in the MegaV cluster on
+# Ubuntu 22.04 (MegaV_checker charts/github-runners), libxray-mac a Mac of
+# ours. A pull request from a fork never runs on them: its jobs keep GitHub's
+# images (matrix.os), as before.
 
 on:
   pull_request:
@@ -32,7 +38,7 @@ concurrency:
 jobs:
   meta:
     name: Version
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || 'libxray' }}
     outputs:
       version: ${{ steps.v.outputs.version }}
       xray_ref: ${{ steps.v.outputs.xray_ref }}
@@ -78,22 +84,27 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     needs: meta
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && matrix.os || fromJSON(matrix.runner) }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: android
             os: ubuntu-24.04
+            runner: '"libxray"'
           # 22.04 keeps the glibc floor at 2.35 for the Linux app.
           - target: linux-amd64
             os: ubuntu-22.04
+            runner: '"libxray"'
           - target: linux-arm64
             os: ubuntu-22.04-arm
+            runner: '"libxray"'
           - target: windows-amd64
             os: ubuntu-24.04
+            runner: '"libxray"'
           - target: macos-universal
             os: macos-15
+            runner: '"libxray-mac"'
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -113,6 +124,47 @@ jobs:
           go-version-file: libXray/go.mod
           cache-dependency-path: libXray/go.sum
 
+      # Our Linux runner is a bare Ubuntu 22.04, not GitHub's image: a C compiler for cgo,
+      # the Android SDK, the arm64 cross compiler. Installed once, kept in the runner's
+      # container between jobs.
+      - name: C compiler
+        if: runner.environment == 'self-hosted' && runner.os == 'Linux'
+        run: command -v gcc >/dev/null || { sudo apt-get update -q && sudo apt-get install -y -q gcc libc6-dev; }
+
+      # JDK 17, Google's command-line tools (checksum from its repository manifest
+      # repository2-3.xml), platform 36 and NDK 27.3, as for the hand-built AARs.
+      - name: Android SDK
+        if: matrix.target == 'android' && runner.environment == 'self-hosted'
+        env:
+          SDK: /opt/android-sdk
+          TOOLS_ZIP: commandlinetools-linux-16111833_latest.zip
+          TOOLS_SHA1: e025545c62a8e64c7559119566a569fb1dec5f60
+        run: |
+          set -euo pipefail
+          command -v javac >/dev/null && command -v unzip >/dev/null \
+            || { sudo apt-get update -q && sudo apt-get install -y -q openjdk-17-jdk-headless unzip; }
+          if [ ! -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
+            tmp="$(mktemp -d)"
+            curl -fsSL -o "$tmp/tools.zip" "https://dl.google.com/android/repository/$TOOLS_ZIP"
+            echo "$TOOLS_SHA1  $tmp/tools.zip" | sha1sum -c -
+            unzip -q "$tmp/tools.zip" -d "$tmp"
+            sudo mkdir -p "$SDK/cmdline-tools"
+            sudo mv "$tmp/cmdline-tools" "$SDK/cmdline-tools/latest"
+            rm -rf "${tmp:?}"
+          fi
+          yes | sudo "$SDK/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$SDK" --licenses >/dev/null || true
+          sudo "$SDK/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$SDK" --install "platforms;android-36" "ndk;27.3.13750724" >/dev/null
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+
+      # No arm64 runner of ours: linux-arm64 is cross-built on amd64, as the hand-built cores
+      # were (a set CC turns cgo on for the cross build).
+      - name: arm64 cross compiler
+        if: matrix.target == 'linux-arm64' && runner.arch == 'X64'
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+          echo "CC=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
       - name: Install mingw-w64
         if: matrix.target == 'windows-amd64'
         run: sudo apt-get update -q && sudo apt-get install -y -q gcc-mingw-w64-x86-64
@@ -126,11 +178,17 @@ jobs:
       - name: Build info
         env:
           TARGET: ${{ matrix.target }}
-          RUNNER_IMAGE: ${{ matrix.os }}
+          HOSTED_IMAGE: ${{ matrix.os }}
+          RUNNER_ENV: ${{ runner.environment }}
         run: |
           set -euo pipefail
+          runner="$HOSTED_IMAGE"
+          if [ "$RUNNER_ENV" = "self-hosted" ]; then
+            if [ -r /etc/os-release ]; then os="$(. /etc/os-release && echo "$ID-$VERSION_ID")"; else os="macos-$(sw_vers -productVersion)"; fi
+            runner="self-hosted $RUNNER_NAME ($os)"
+          fi
           f="dist/buildinfo-$TARGET.json"
-          jq --arg runner "$RUNNER_IMAGE" '. + {runner: $runner}' "$f" > "$f.tmp"
+          jq --arg runner "$runner" '. + {runner: $runner}' "$f" > "$f.tmp"
           mv "$f.tmp" "$f"
           cat "$f"
 
@@ -145,7 +203,7 @@ jobs:
   checksums:
     name: Checksums
     needs: [meta, build]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || 'libxray' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -185,7 +243,7 @@ jobs:
     name: Release
     needs: [meta, checksums]
     if: needs.meta.outputs.release == 'true'
-    runs-on: ubuntu-latest
+    runs-on: libxray
     permissions:
       contents: write
     steps:
