@@ -241,6 +241,14 @@ func ObservatoryCheck() string {
 	return xray.ObservatoryCheck()
 }
 
+// GetTrafficStats — root wrapper: the bytes of every outbound of the running
+// core since it started, read in the process.
+//
+// Returns JSON: see xray/traffic_stats.go::TrafficStatsResponse.
+func GetTrafficStats() string {
+	return xray.GetTrafficStats()
+}
+
 // GetBuildInfo — sanity-check метаданных билда. Используется Dart-стороной
 // чтобы понять какая версия libv2ray.a/.aar/.xcframework сейчас подключена
 // (поддерживает ли chain-mode PR #5805, observatory_state API и т.д.).
