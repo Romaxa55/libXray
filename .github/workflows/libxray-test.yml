@@ -6,7 +6,8 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Our runner (build-cores.yml); a pull request from a fork keeps GitHub's image.
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || 'libxray' }}
     permissions:
       contents: read
     steps:
