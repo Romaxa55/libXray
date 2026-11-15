@@ -140,7 +140,8 @@ jobs:
           name: core-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
-          retention-days: 14
+          # Only the checksums job of this run reads it; the account's artifact quota is shared (MegaV#18, TG 1094).
+          retention-days: 1
 
   checksums:
     name: Checksums
@@ -179,7 +180,8 @@ jobs:
           name: cores-${{ needs.meta.outputs.version }}
           path: dist/*
           if-no-files-found: error
-          retention-days: 14
+          # The release is the lasting copy; a few days are left to fetch a PR build (MegaV#18, TG 1094).
+          retention-days: 3
 
   release:
     name: Release
