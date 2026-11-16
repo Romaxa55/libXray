@@ -13,7 +13,10 @@
 #   linux-arm64      libXray.so + .h, xray       same, arm64
 #   windows-amd64    libv2ray.dll + .h           c-shared ./libv2ray_cgo, mingw cross
 #   macos-universal  libv2ray.a + .h             c-archive ./libv2ray_cgo, arm64+amd64 lipo
-# iOS (Libv2ray.xcframework) is not built here.
+#   ios              Libv2ray-<version>-ios.xcframework  gomobile bind ./libv2ray for ios,
+#                    iossimulator, macos, maccatalyst (needs Xcode). Not a release asset:
+#                    the MegaV iOS app links it from its repo (vpn_native_client/ios/Frameworks
+#                    and v2ray_flutter/ios/Frameworks), rebuilt with every core tag.
 #
 # Environment:
 #   XRAY_CORE_DIR   xray-core fork checkout (default: ../xray-core next to libXray)
@@ -23,6 +26,7 @@
 #   ANDROID_NDK_HOME  NDK 27.x for android (default: newest $ANDROID_SDK_ROOT/ndk/27.*;
 #                     a set ANDROID_NDK_HOME of another major is ignored)
 #   MACOSX_DEPLOYMENT_TARGET  minimum macOS of the archive (default 12.0, Go 1.26 floor)
+#   IOS_MIN         minimum iOS of the xcframework (default 15.0, as the app)
 # Each build also writes buildinfo-<target>.json (go, ndk) into <out-dir>.
 set -euo pipefail
 
@@ -144,6 +148,17 @@ case "$TARGET" in
     cp "$WORK/libv2ray.a" "$OUT_DIR/libv2ray-${NAME_SUFFIX}.a"
     cp "$WORK/arm64/libv2ray.h" "$OUT_DIR/libv2ray-${NAME_SUFFIX}.h"
     ;;
+  ios)
+    # gomobile and gobind pinned in go.mod, as for android; bind only needs gobind in PATH.
+    export GOBIN="$WORK/bin"
+    go install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
+    PATH="$GOBIN:$PATH"
+    IOS_MIN="${IOS_MIN:-15.0}"
+    (cd libv2ray && gomobile bind -target ios,iossimulator,macos,maccatalyst -iosversion "$IOS_MIN" -trimpath \
+      -ldflags="${VERSION_LDFLAGS}" -o "$WORK/Libv2ray.xcframework" .)
+    rm -rf "$OUT_DIR/Libv2ray-${NAME_SUFFIX}.xcframework"
+    cp -R "$WORK/Libv2ray.xcframework" "$OUT_DIR/Libv2ray-${NAME_SUFFIX}.xcframework"
+    ;;
   *)
     echo "[build-core] unknown target: $TARGET" >&2
     exit 2
@@ -154,6 +169,7 @@ esac
   printf '{"target":"%s","go":"%s"' "$TARGET" "$(go env GOVERSION)"
   [ -z "$NDK_VERSION" ] || printf ',"ndk":"%s"' "$NDK_VERSION"
   [ "$TARGET" != "macos-universal" ] || printf ',"macos_min":"%s"' "$MACOSX_DEPLOYMENT_TARGET"
+  [ "$TARGET" != "ios" ] || printf ',"ios_min":"%s"' "$IOS_MIN"
   printf '}\n'
 } > "$OUT_DIR/buildinfo-$TARGET.json"
 
