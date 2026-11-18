@@ -67,16 +67,10 @@ func TestClashHysteria2_WithBandwidthPortHoppingSalamander(t *testing.T) {
 	assert.Equal(t, conf.Bandwidth("100 mbps"), qp.BrutalUp)
 	assert.Equal(t, conf.Bandwidth("200 mbps"), qp.BrutalDown)
 
-	// UdpHop (v26.5.9 API)
-	require.Len(t, qp.UdpHop.PortList.Range, 1)
-	assert.Equal(t, uint32(20000), qp.UdpHop.PortList.Range[0].From)
-	assert.Equal(t, uint32(40000), qp.UdpHop.PortList.Range[0].To)
-	assert.Equal(t, int32(30), qp.UdpHop.Interval.From)
-	assert.Equal(t, int32(30), qp.UdpHop.Interval.To)
-
-	// Salamander
-	require.Len(t, ss.FinalMask.Udp, 1)
+	// Salamander first, the udphop mask last (it must wrap the raw socket)
+	require.Len(t, ss.FinalMask.Udp, 2)
 	assert.Equal(t, "salamander", ss.FinalMask.Udp[0].Type)
+	requireHy2Hop(t, ss.FinalMask, 20000, 40000, 30)
 	var salamander conf.Salamander
 	require.NoError(t, json.Unmarshal(*ss.FinalMask.Udp[0].Settings, &salamander))
 	assert.Equal(t, "secret", salamander.Password)
@@ -111,8 +105,6 @@ func TestClashHysteria2_BandwidthOnly(t *testing.T) {
 	// No Salamander
 	assert.Empty(t, ss.FinalMask.Udp)
 
-	// No UdpHop (v26.5.9 API: PortList — value-type, проверяем len Range)
-	assert.Empty(t, qp.UdpHop.PortList.Range)
 }
 
 func TestClashHysteria2_SalamanderOnly(t *testing.T) {
@@ -178,7 +170,6 @@ func TestClashShadowsocks_Plain(t *testing.T) {
 	require.NoError(t, json.Unmarshal(*ob.Settings, &s))
 	assert.Equal(t, "aes-128-gcm", s.Cipher)
 	assert.Equal(t, "secret", s.Password)
-	assert.True(t, s.UoT)
 	assert.Nil(t, ob.StreamSetting)
 }
 

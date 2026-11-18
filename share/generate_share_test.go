@@ -65,26 +65,22 @@ func TestGenerate_Hy2_WithBandwidth(t *testing.T) {
 func TestGenerate_Hy2_WithSalamanderBandwidthPortHopping(t *testing.T) {
 	tls := &conf.TLSConfig{ServerName: "example.com"}
 
-	// v26.5.9 API: PortList — value-type, парсится через UnmarshalJSON
-	var pl conf.PortList
-	require.NoError(t, pl.UnmarshalJSON([]byte(`"20000-40000"`)))
-
 	fm := &conf.FinalMask{
 		QuicParams: &conf.QuicParamsConfig{
 			Congestion: "brutal",
 			BrutalUp:   conf.Bandwidth("50 mbps"),
 			BrutalDown: conf.Bandwidth("100 mbps"),
-			UdpHop: conf.UdpHop{
-				PortList: pl,
-				Interval: conf.Int32Range{Left: 30, Right: 30, From: 30, To: 30},
-			},
 		},
 	}
 
 	salamander := &conf.Salamander{Password: "secret"}
 	salJSON, err := json.Marshal(salamander)
 	require.NoError(t, err)
-	fm.Udp = []conf.Mask{{Type: "salamander", Settings: new(json.RawMessage(salJSON))}}
+	// xray-core 26.11.9: port hopping is the udphop UDP mask, last after salamander
+	fm.Udp = []conf.Mask{
+		{Type: "salamander", Settings: new(json.RawMessage(salJSON))},
+		{Type: "udphop", Settings: hy2HopMaskSettings(t, "20000-40000", 30)},
+	}
 
 	ss := buildHy2StreamSettings("auth", tls, fm)
 	outbound := buildHy2Outbound(t, "auth", "host", 443, ss)
@@ -100,6 +96,37 @@ func TestGenerate_Hy2_WithSalamanderBandwidthPortHopping(t *testing.T) {
 	assert.Equal(t, "30", q.Get("hop-interval"))
 	assert.Equal(t, "salamander", q.Get("obfs"))
 	assert.Equal(t, "secret", q.Get("obfs-password"))
+}
+
+// A udphop mask without salamander must not turn into obfs=salamander with an empty password.
+func TestGenerate_Hy2_HopWithoutSalamander(t *testing.T) {
+	tls := &conf.TLSConfig{ServerName: "example.com"}
+	fm := &conf.FinalMask{Udp: []conf.Mask{{Type: "udphop", Settings: hy2HopMaskSettings(t, "20000-40000", 10)}}}
+	ss := buildHy2StreamSettings("auth", tls, fm)
+	outbound := buildHy2Outbound(t, "auth", "host", 443, ss)
+
+	link, err := shareLink(outbound)
+	require.NoError(t, err)
+
+	q := link.Query()
+	assert.Equal(t, "20000-40000", q.Get("ports"))
+	assert.Equal(t, "10", q.Get("hop-interval"))
+	assert.False(t, q.Has("obfs"))
+	assert.False(t, q.Has("obfs-password"))
+}
+
+func hy2HopMaskSettings(t *testing.T, ports string, interval int32) *json.RawMessage {
+	t.Helper()
+	var pl conf.PortList
+	require.NoError(t, pl.UnmarshalJSON([]byte(`"`+ports+`"`)))
+	raw, err := json.Marshal(&conf.UDPHop{
+		Mode:        "intervalLocal,intervalRemote",
+		RemotePorts: pl,
+		Interval:    conf.Int32Range{Left: interval, Right: interval, From: interval, To: interval},
+	})
+	require.NoError(t, err)
+	msg := json.RawMessage(raw)
+	return &msg
 }
 
 func TestGenerate_Hy2_WithFullTLSParams(t *testing.T) {
@@ -147,6 +174,52 @@ func TestGenerate_Hy2_RoundTrip(t *testing.T) {
 	assert.Equal(t, origQ.Get("hop-interval"), genQ.Get("hop-interval"))
 	assert.Equal(t, origQ.Get("obfs"), genQ.Get("obfs"))
 	assert.Equal(t, origQ.Get("obfs-password"), genQ.Get("obfs-password"))
+}
+
+// Links round-trip byte for byte as with the old QuicParams.UdpHop: the checker keys servers by the canonical link.
+func TestGenerate_Hy2_HopRoundTripKeepsTheLink(t *testing.T) {
+	cases := []struct {
+		name, link, wantPorts, wantInterval string
+	}{
+		{"range, no interval", "hy2://auth@host:443?ports=20000-40000&sni=example.com", "20000-40000", ""},
+		{"range, interval 0 = core default", "hy2://auth@host:443?ports=20000-40000&hop-interval=0&sni=example.com", "20000-40000", ""},
+		{"range, interval 15", "hy2://auth@host:443?ports=20000-40000&hop-interval=15&sni=example.com", "20000-40000", "15"},
+		{"single port", "hy2://auth@host:443?ports=8443&sni=example.com", "8443", ""},
+		{"list", "hy2://auth@host:443?ports=8443,20000-20010&sni=example.com", "8443,20000-20010", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			config, err := ConvertShareLinksToXrayJson(c.link)
+			require.NoError(t, err)
+			require.Len(t, config.OutboundConfigs, 1)
+			generated, err := shareLink(config.OutboundConfigs[0])
+			require.NoError(t, err)
+			q := generated.Query()
+			assert.Equal(t, c.wantPorts, q.Get("ports"))
+			assert.Equal(t, c.wantInterval, q.Get("hop-interval"))
+			assert.False(t, q.Has("obfs"))
+		})
+	}
+}
+
+// A hop interval under 5 s is refused, as the core refuses it.
+func TestHysteria2_HopIntervalBelowFiveRefused(t *testing.T) {
+	_, err := buildHy2FinalMask("", "", "20000-40000", new(int32(3)), "", "")
+	require.Error(t, err)
+}
+
+// The core itself builds the stream config of a hop link: mask types and settings it accepts.
+func TestHysteria2_CoreBuildsHopMask(t *testing.T) {
+	for _, link := range []string{
+		"hy2://auth@host:443?obfs=salamander&obfs-password=secret&ports=20000-40000&hop-interval=10&sni=example.com",
+		"hy2://auth@host:443?ports=8443&sni=example.com",
+		"hy2://auth@host:443?up=50+mbps&down=100+mbps&ports=20000-40000&sni=example.com",
+	} {
+		outbound := parseHy2Link(t, link)
+		require.NotNil(t, outbound.StreamSetting)
+		_, err := outbound.StreamSetting.Build()
+		require.NoError(t, err, link)
+	}
 }
 
 func TestConvertXrayJsonToShareLinks_RoundTripProtocols(t *testing.T) {

@@ -12,6 +12,9 @@
 #                                                Linux app's daemon runs it as /usr/lib/megav/v2ray)
 #   linux-arm64      libXray.so + .h, xray       same, arm64
 #   windows-amd64    libv2ray.dll + .h           c-shared ./libv2ray_cgo, mingw cross
+#   openwrt          xray-<version>-openwrt-<variant>.xz  xray's CLI as for linux-*, one
+#                    static binary per Go arch variant (amd64 386 arm64 arm-5 arm-7 mips
+#                    mipsle riscv64); the MegaV repo packs them as megav-xray (MegaV#18)
 #   macos-universal  libv2ray.a + .h             c-archive ./libv2ray_cgo, arm64+amd64 lipo
 #   ios              Libv2ray-<version>-ios.xcframework  gomobile bind ./libv2ray for ios,
 #                    iossimulator, macos, maccatalyst (needs Xcode). Not a release asset:
@@ -25,7 +28,7 @@
 #   CC              C compiler override (linux-arm64 cross, windows mingw)
 #   ANDROID_NDK_HOME  NDK 27.x for android (default: newest $ANDROID_SDK_ROOT/ndk/27.*;
 #                     a set ANDROID_NDK_HOME of another major is ignored)
-#   MACOSX_DEPLOYMENT_TARGET  minimum macOS of the archive (default 12.0, Go 1.26 floor)
+#   MACOSX_DEPLOYMENT_TARGET  minimum macOS of the archive (default 13.0, Go 1.27 floor)
 #   IOS_MIN         minimum iOS of the xcframework (default 15.0, as the app)
 # Each build also writes buildinfo-<target>.json (go, ndk) into <out-dir>.
 set -euo pipefail
@@ -109,8 +112,10 @@ case "$TARGET" in
     export GOBIN="$WORK/bin"
     go install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
     PATH="$GOBIN:$PATH"
+    # -checklinkname=0 as upstream's android release: since Go 1.27 the linker refuses
+    # wlynxg/anet's //go:linkname to net.zoneCache (finalmask/realm -> pion/stun -> anet).
     (cd libv2ray && gomobile bind -target android -androidapi 21 -trimpath \
-      -ldflags="${VERSION_LDFLAGS} -extldflags=-Wl,-z,max-page-size=16384" -o "$WORK/libv2ray.aar" .)
+      -ldflags="${VERSION_LDFLAGS} -checklinkname=0 -extldflags=-Wl,-z,max-page-size=16384" -o "$WORK/libv2ray.aar" .)
     cp "$WORK/libv2ray.aar" "$OUT_DIR/libv2ray-${NAME_SUFFIX}.aar"
     cp "$WORK/libv2ray-sources.jar" "$OUT_DIR/libv2ray-${NAME_SUFFIX}-sources.jar"
     ;;
@@ -132,6 +137,29 @@ case "$TARGET" in
     cp "$WORK/libXray.so" "$OUT_DIR/libXray-${NAME_SUFFIX}.so"
     cp "$WORK/libXray.h" "$OUT_DIR/libXray-${NAME_SUFFIX}.h"
     ;;
+  openwrt)
+    # Routers (MegaV#18): the package megav runs /usr/libexec/megav/xray when it is there and
+    # at least 26.6.1; the MegaV repo packs these as megav-xray for every OpenWrt package
+    # architecture (.github/workflows/build-openwrt.yml). xz: ~35 MB a binary unpacked.
+    # One executable per variant, each the subset every package architecture it serves runs
+    # (OpenWrt's golang-values.mk picks finer ones): ARM without VFP and ARMv6 with VFP run
+    # GOARM=5, ARMv7 with VFP/NEON GOARM=7; GOMIPS=softfloat runs on MIPS with and without an
+    # FPU; GO386=softfloat on pentium-mmx without SSE2 as on pentium4. Soft float costs only
+    # floating-point speed, which xray barely uses.
+    for variant in amd64 386 arm64 arm-5 arm-7 mips mipsle riscv64; do
+      goarch="${variant%%-*}"
+      goenv=(CGO_ENABLED=0 GOOS=linux GOARCH="$goarch")
+      case "$goarch" in
+        arm) goenv+=(GOARM="${variant#arm-}") ;;
+        mips|mipsle) goenv+=(GOMIPS=softfloat) ;;
+        386) goenv+=(GO386=softfloat) ;;
+      esac
+      env "${goenv[@]}" go build -mod=readonly -trimpath -buildvcs=false -gcflags="all=-l=4" \
+        -ldflags "-X github.com/xtls/xray-core/core.build=${have_ref:0:7} -s -w -buildid=" \
+        -o "$WORK/xray-$variant" github.com/xtls/xray-core/main
+      xz -9 -c "$WORK/xray-$variant" > "$OUT_DIR/xray-${NAME_SUFFIX}-${variant}.xz"
+    done
+    ;;
   windows-amd64)
     CC="${CC:-x86_64-w64-mingw32-gcc}" GOOS=windows GOARCH=amd64 \
       go build -trimpath -ldflags "$GO_LDFLAGS" -buildmode=c-shared -o "$WORK/libv2ray.dll" ./libv2ray_cgo
@@ -139,7 +167,7 @@ case "$TARGET" in
     cp "$WORK/libv2ray.h" "$OUT_DIR/libv2ray-${NAME_SUFFIX}.h"
     ;;
   macos-universal)
-    export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-12.0}"
+    export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
     for arch in arm64 amd64; do
       GOOS=darwin GOARCH="$arch" go build -trimpath -ldflags "$GO_LDFLAGS" -buildmode=c-archive \
         -o "$WORK/$arch/libv2ray.a" ./libv2ray_cgo

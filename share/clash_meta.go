@@ -208,7 +208,7 @@ func (proxy ClashProxy) shadowsocksOutbound() (*conf.OutboundDetourConfig, error
 
 	settings.Cipher = proxy.Cipher
 	settings.Password = proxy.Password
-	settings.UoT = proxy.UdpOverTcp
+	// UDP over TCP (udp-over-tcp) was removed from xray-core's Shadowsocks client in 26.11.9: UDP goes as UDP.
 
 	settingsRawMessage, err := convertJsonToRawMessage(settings)
 	if err != nil {

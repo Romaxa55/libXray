@@ -1,6 +1,6 @@
 name: Build cores
 
-# MegaV core artifacts for every app platform except iOS, built against the
+# MegaV core artifacts for every app platform except iOS and for OpenWrt routers, built against the
 # xray-core fork commit in xray-core.ref (scripts/build-core.sh does the work).
 # A CalVer tag vYY.M.D publishes them as a release of that tag; the same tag
 # gets its Go-module mirror v1.YYMMDD.N from release-go-mirror.yml, so the
@@ -91,6 +91,8 @@ jobs:
           - target: linux-arm64
             os: ubuntu-22.04-arm
           - target: windows-amd64
+            os: ubuntu-24.04
+          - target: openwrt
             os: ubuntu-24.04
           - target: macos-universal
             os: macos-15
@@ -211,4 +213,4 @@ jobs:
           # One release per version: an existing release is never overwritten.
           gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "MegaV cores $VERSION" \
-            --notes "libXray $TAG ($(git rev-parse --short=7 HEAD)), xray-core Romaxa55/Xray-core@${XRAY_REF:0:7}. Android, Linux (libXray.so and the xray executable), Windows, macOS; no iOS. Checksums in SHA256SUMS, build details in versions.json."
+            --notes "libXray $TAG ($(git rev-parse --short=7 HEAD)), xray-core Romaxa55/Xray-core@${XRAY_REF:0:7}. Android, Linux (libXray.so and the xray executable), Windows, macOS, OpenWrt routers (xray executables, xz); no iOS. Checksums in SHA256SUMS, build details in versions.json."

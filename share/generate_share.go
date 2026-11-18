@@ -236,7 +236,7 @@ func streamSettingsQuery(proxy conf.OutboundDetourConfig, link *url.URL) {
 			}
 		}
 
-		// QuicParams (bandwidth + port-hopping)
+		// QuicParams (bandwidth)
 		if streamSettings.FinalMask != nil && streamSettings.FinalMask.QuicParams != nil {
 			qp := streamSettings.FinalMask.QuicParams
 			if len(qp.BrutalUp) > 0 {
@@ -245,35 +245,20 @@ func streamSettingsQuery(proxy conf.OutboundDetourConfig, link *url.URL) {
 			if len(qp.BrutalDown) > 0 {
 				query = addQuery(query, "down", string(qp.BrutalDown))
 			}
-			// v26.5.9 API: UdpHop.PortList и Interval теперь value-types (struct),
-			// не указатели. Проверяем через len(Range)/From.
-			if len(qp.UdpHop.PortList.Range) > 0 {
-				var parts []string
-				for _, r := range qp.UdpHop.PortList.Range {
-					if r.From == r.To {
-						parts = append(parts, strconv.Itoa(int(r.From)))
-					} else {
-						parts = append(parts, fmt.Sprintf("%d-%d", r.From, r.To))
-					}
-				}
-				query = addQuery(query, "ports", strings.Join(parts, ","))
-			}
-			if qp.UdpHop.Interval.From > 0 {
-				query = addQuery(query, "hop-interval", strconv.FormatInt(int64(qp.UdpHop.Interval.From), 10))
+		}
+
+		// Port hopping: the udphop UDP mask since xray-core 26.11.9 (was QuicParams.UdpHop).
+		if ports, interval, ok := hy2HopFromFinalMask(streamSettings.FinalMask); ok {
+			query = addQuery(query, "ports", ports)
+			if interval > 0 {
+				query = addQuery(query, "hop-interval", strconv.FormatInt(int64(interval), 10))
 			}
 		}
 
 		// Salamander
-		if streamSettings.FinalMask != nil && len(streamSettings.FinalMask.Udp) > 0 {
-			mask := streamSettings.FinalMask.Udp[0]
-			if mask.Settings != nil {
-				var obfs *conf.Salamander
-				err := json.Unmarshal(*mask.Settings, &obfs)
-				if err == nil {
-					query = addQuery(query, "obfs", "salamander")
-					query = addQuery(query, "obfs-password", obfs.Password)
-				}
-			}
+		if password, ok := hy2SalamanderFromFinalMask(streamSettings.FinalMask); ok {
+			query = addQuery(query, "obfs", "salamander")
+			query = addQuery(query, "obfs-password", password)
 		}
 		link.RawQuery = query
 		return

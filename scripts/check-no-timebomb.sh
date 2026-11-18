@@ -22,13 +22,15 @@ FORK_DIR="${1:-$SCRIPT_DIR/../../xray-core}"
 
 if [ ! -d "$FORK_DIR" ]; then
   echo "[timebomb-guard] ERROR: xray-core fork not found at: $FORK_DIR" >&2
-  echo "[timebomb-guard] Clone it (Romaxa55/Xray-core@feature/dialer-proxy-balancer) and re-apply patches." >&2
+  echo "[timebomb-guard] Clone Romaxa55/Xray-core and check out the commit in libXray/xray-core.ref." >&2
   exit 1
 fi
 
-TLS_FILE="$FORK_DIR/infra/conf/transport_internet.go"
-if [ ! -f "$TLS_FILE" ]; then
-  echo "[timebomb-guard] ERROR: $TLS_FILE missing — fork layout unexpected." >&2
+# The file holding TLSConfig: found by its allowInsecure field, not by name — upstream moved it
+# from transport_internet.go to transport_security.go when it split that file (xray-core fb548f54).
+TLS_FILE="$(grep -lE 'json:"allowInsecure"' "$FORK_DIR"/infra/conf/*.go 2>/dev/null | grep -v '_test\.go$' | head -1 || true)"
+if [ -z "$TLS_FILE" ] || [ ! -f "$TLS_FILE" ]; then
+  echo "[timebomb-guard] ERROR: no infra/conf/*.go with the allowInsecure field — fork layout unexpected." >&2
   exit 1
 fi
 
@@ -59,8 +61,10 @@ if ! grep -q 'config.AllowInsecure = true' "$TLS_FILE"; then
   fail=1
 fi
 
-# 4) hysteria OmitMaxDatagramFrameSize date-flip (upstream flips true after
-#    2026-09-01, silently changing QUIC datagram behaviour). Must be pinned.
+# 4) hysteria OmitMaxDatagramFrameSize date-flip (upstream flipped it to true after
+#    2026-09-01; since v26.11.9 upstream keeps true as a constant, which the default
+#    ChromeParrot overrides — it advertises max_datagram_frame_size anyway). A date
+#    gate must not come back.
 HYST_FILE="$FORK_DIR/transport/internet/hysteria/dialer.go"
 if [ -f "$HYST_FILE" ]; then
   if grep -nE 'OmitMaxDatagramFrameSize:\s*time\.Now\(\)\.After\(time\.Date' "$HYST_FILE" >/dev/null 2>&1; then
@@ -85,10 +89,10 @@ fi
 
 if [ "$fail" -ne 0 ]; then
   echo "[timebomb-guard] FAILED — refusing to build a libv2ray with active date-bombs." >&2
-  echo "[timebomb-guard] The degrade lives in the fork tree (commit b879ebd1 on" >&2
-  echo "[timebomb-guard] feature/dialer-proxy-balancer). Reset ../xray-core back to that" >&2
-  echo "[timebomb-guard] branch, or re-apply libXray/patches/0002-defuse-date-timebombs.patch." >&2
+  echo "[timebomb-guard] The degrade lives in the fork tree (Romaxa55/Xray-core, the branch" >&2
+  echo "[timebomb-guard] of the commit in libXray/xray-core.ref, e.g. megav/v26.11.9). Check out" >&2
+  echo "[timebomb-guard] that commit in ../xray-core; on a new upstream base port the degrade first." >&2
   exit 1
 fi
 
-echo "[timebomb-guard] OK — allowInsecure degrade + hysteria pin in place, no date-gated fatal/flip in fork."
+echo "[timebomb-guard] OK — allowInsecure degrade in place, no date-gated fatal/flip in fork."

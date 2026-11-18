@@ -99,16 +99,28 @@ func TestHysteria2_WithEverything(t *testing.T) {
 	assert.Equal(t, conf.Bandwidth("50 mbps"), qp.BrutalUp)
 	assert.Equal(t, conf.Bandwidth("100 mbps"), qp.BrutalDown)
 
-	// UdpHop (v26.5.9 API: PortList — value-type с Range []PortRange)
-	require.Len(t, qp.UdpHop.PortList.Range, 1)
-	assert.Equal(t, uint32(20000), qp.UdpHop.PortList.Range[0].From)
-	assert.Equal(t, uint32(40000), qp.UdpHop.PortList.Range[0].To)
-	assert.Equal(t, int32(30), qp.UdpHop.Interval.From)
-	assert.Equal(t, int32(30), qp.UdpHop.Interval.To)
-
-	// Salamander
-	require.Len(t, ss.FinalMask.Udp, 1)
+	// Salamander first, the udphop mask last (it must wrap the raw socket)
+	require.Len(t, ss.FinalMask.Udp, 2)
 	assert.Equal(t, "salamander", ss.FinalMask.Udp[0].Type)
+	requireHy2Hop(t, ss.FinalMask, 20000, 40000, 30)
+}
+
+// requireHy2Hop checks the last UDP mask: udphop over [from, to] every interval seconds (xray-core 26.11.9 API).
+func requireHy2Hop(t *testing.T, mask *conf.FinalMask, from, to uint32, interval int32) {
+	t.Helper()
+	require.NotNil(t, mask)
+	require.NotEmpty(t, mask.Udp)
+	last := mask.Udp[len(mask.Udp)-1]
+	require.Equal(t, "udphop", last.Type)
+	require.NotNil(t, last.Settings)
+	var hop conf.UDPHop
+	require.NoError(t, json.Unmarshal(*last.Settings, &hop))
+	assert.Equal(t, "intervalLocal,intervalRemote", hop.Mode)
+	require.Len(t, hop.RemotePorts.Range, 1)
+	assert.Equal(t, from, hop.RemotePorts.Range[0].From)
+	assert.Equal(t, to, hop.RemotePorts.Range[0].To)
+	assert.Equal(t, interval, hop.Interval.From)
+	assert.Equal(t, interval, hop.Interval.To)
 }
 
 func TestHysteria2_WithTLSParams(t *testing.T) {
@@ -130,20 +142,11 @@ func TestHysteria2_PortsOnlyNoCongestion(t *testing.T) {
 	ss := outbound.StreamSetting
 	require.NotNil(t, ss)
 	require.NotNil(t, ss.FinalMask)
-	require.NotNil(t, ss.FinalMask.QuicParams)
+	// No QuicParams when only ports are set (no bandwidth): hopping is a UDP mask since xray-core 26.11.9
+	assert.Nil(t, ss.FinalMask.QuicParams)
 
-	qp := ss.FinalMask.QuicParams
-	// No Congestion when only ports are set (no bandwidth)
-	assert.Empty(t, qp.Congestion)
-	assert.Empty(t, string(qp.BrutalUp))
-	assert.Empty(t, string(qp.BrutalDown))
-
-	// UdpHop is set (v26.5.9 API)
-	require.Len(t, qp.UdpHop.PortList.Range, 1)
-	assert.Equal(t, uint32(20000), qp.UdpHop.PortList.Range[0].From)
-	assert.Equal(t, uint32(40000), qp.UdpHop.PortList.Range[0].To)
-	assert.Equal(t, int32(10), qp.UdpHop.Interval.From)
-	assert.Equal(t, int32(10), qp.UdpHop.Interval.To)
+	require.Len(t, ss.FinalMask.Udp, 1)
+	requireHy2Hop(t, ss.FinalMask, 20000, 40000, 10)
 }
 
 func TestHysteria2_TLSDefaultWhenSecurityOmitted(t *testing.T) {
