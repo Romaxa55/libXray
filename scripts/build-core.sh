@@ -25,7 +25,7 @@
 #   CC              C compiler override (linux-arm64 cross, windows mingw)
 #   ANDROID_NDK_HOME  NDK 27.x for android (default: newest $ANDROID_SDK_ROOT/ndk/27.*;
 #                     a set ANDROID_NDK_HOME of another major is ignored)
-#   MACOSX_DEPLOYMENT_TARGET  minimum macOS of the archive (default 12.0, Go 1.26 floor)
+#   MACOSX_DEPLOYMENT_TARGET  minimum macOS of the archive (default 13.0, Go 1.27 floor)
 #   IOS_MIN         minimum iOS of the xcframework (default 15.0, as the app)
 # Each build also writes buildinfo-<target>.json (go, ndk) into <out-dir>.
 set -euo pipefail
@@ -109,8 +109,10 @@ case "$TARGET" in
     export GOBIN="$WORK/bin"
     go install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
     PATH="$GOBIN:$PATH"
+    # -checklinkname=0 as upstream's android release: since Go 1.27 the linker refuses
+    # wlynxg/anet's //go:linkname to net.zoneCache (finalmask/realm -> pion/stun -> anet).
     (cd libv2ray && gomobile bind -target android -androidapi 21 -trimpath \
-      -ldflags="${VERSION_LDFLAGS} -extldflags=-Wl,-z,max-page-size=16384" -o "$WORK/libv2ray.aar" .)
+      -ldflags="${VERSION_LDFLAGS} -checklinkname=0 -extldflags=-Wl,-z,max-page-size=16384" -o "$WORK/libv2ray.aar" .)
     cp "$WORK/libv2ray.aar" "$OUT_DIR/libv2ray-${NAME_SUFFIX}.aar"
     cp "$WORK/libv2ray-sources.jar" "$OUT_DIR/libv2ray-${NAME_SUFFIX}-sources.jar"
     ;;
@@ -139,7 +141,7 @@ case "$TARGET" in
     cp "$WORK/libv2ray.h" "$OUT_DIR/libv2ray-${NAME_SUFFIX}.h"
     ;;
   macos-universal)
-    export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-12.0}"
+    export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
     for arch in arm64 amd64; do
       GOOS=darwin GOARCH="$arch" go build -trimpath -ldflags "$GO_LDFLAGS" -buildmode=c-archive \
         -o "$WORK/$arch/libv2ray.a" ./libv2ray_cgo
