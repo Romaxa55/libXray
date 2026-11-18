@@ -149,12 +149,18 @@ case "$TARGET" in
     for variant in amd64 386 arm64 arm-5 arm-7 mips mipsle riscv64; do
       goarch="${variant%%-*}"
       goenv=(CGO_ENABLED=0 GOOS=linux GOARCH="$goarch")
+      gcflags=(-gcflags="all=-l=4")
       case "$goarch" in
         arm) goenv+=(GOARM="${variant#arm-}") ;;
-        mips|mipsle) goenv+=(GOMIPS=softfloat) ;;
+        # 32-bit MIPS: with all=-l=4 the runtime does not compile ("write barrier prohibited by
+        # caller", gcFlushBgCredit; go1.26.10, go1.27.0, go1.27.4, soft and hard float). There the
+        # 64-bit atomics are Go code with a panic path, and -l=4 inlines it into GC code that must
+        # not have write barriers. -l=4 for the main package only, as upstream's release.yml for
+        # mips/mipsle.
+        mips|mipsle) goenv+=(GOMIPS=softfloat); gcflags=(-gcflags="-l=4") ;;
         386) goenv+=(GO386=softfloat) ;;
       esac
-      env "${goenv[@]}" go build -mod=readonly -trimpath -buildvcs=false -gcflags="all=-l=4" \
+      env "${goenv[@]}" go build -mod=readonly -trimpath -buildvcs=false "${gcflags[@]}" \
         -ldflags "-X github.com/xtls/xray-core/core.build=${have_ref:0:7} -s -w -buildid=" \
         -o "$WORK/xray-$variant" github.com/xtls/xray-core/main
       xz -9 -c "$WORK/xray-$variant" > "$OUT_DIR/xray-${NAME_SUFFIX}-${variant}.xz"
