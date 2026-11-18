@@ -141,9 +141,11 @@ case "$TARGET" in
     # Routers (MegaV#18): the package megav runs /usr/libexec/megav/xray when it is there and
     # at least 26.6.1; the MegaV repo packs these as megav-xray for every OpenWrt package
     # architecture (.github/workflows/build-openwrt.yml). xz: ~35 MB a binary unpacked.
-    # Variants as OpenWrt's golang-values.mk picks them: ARM without VFP runs GOARM=5, ARMv7
-    # with VFP GOARM=7; MIPS routers have no FPU (GOMIPS=softfloat); i386 targets include
-    # pentium-mmx without SSE2 (GO386=softfloat).
+    # One executable per variant, each the subset every package architecture it serves runs
+    # (OpenWrt's golang-values.mk picks finer ones): ARM without VFP and ARMv6 with VFP run
+    # GOARM=5, ARMv7 with VFP/NEON GOARM=7; GOMIPS=softfloat runs on MIPS with and without an
+    # FPU; GO386=softfloat on pentium-mmx without SSE2 as on pentium4. Soft float costs only
+    # floating-point speed, which xray barely uses.
     for variant in amd64 386 arm64 arm-5 arm-7 mips mipsle riscv64; do
       goarch="${variant%%-*}"
       goenv=(CGO_ENABLED=0 GOOS=linux GOARCH="$goarch")
