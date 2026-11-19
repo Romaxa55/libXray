@@ -40,7 +40,7 @@
 //     vless         78% of servers in data_v5.dat
 //     trojan        11%
 //     shadowsocks   8%
-//     shadowsocks_2022 (rare but present)
+//     shadowsocks_2022 (rare but present) — distro_apple_ss2022.go, not with the zeus_nogpl tag
 //     vmess         2.5%
 //     wireguard     fallback if VLESS gets banned
 //     freedom       fragment outbound (anti-DPI) + direct
@@ -121,7 +121,6 @@ import (
 	_ "github.com/xtls/xray-core/proxy/dns"
 	_ "github.com/xtls/xray-core/proxy/freedom"
 	_ "github.com/xtls/xray-core/proxy/shadowsocks"
-	_ "github.com/xtls/xray-core/proxy/shadowsocks_2022"
 	_ "github.com/xtls/xray-core/proxy/trojan"
 	_ "github.com/xtls/xray-core/proxy/vless/outbound"
 	_ "github.com/xtls/xray-core/proxy/vmess/outbound"
